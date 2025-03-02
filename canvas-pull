@@ -1,0 +1,99 @@
+#!/bin/bash
+
+# canvas-pull main script
+# Function: Automatically initialize a Git repository (only once) + automatically track file changes
+
+# --------------------------
+# Configuration Parsing Module
+# --------------------------
+
+cd "$(dirname "$0")"
+
+# Parse SAVE_DIR from config.yml
+CONFIG_FILE="config.yml"
+get_save_dir() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Error: Configuration file $CONFIG_FILE not found" >&2
+        exit 1
+    fi
+    
+    # Use grep to extract SAVE_DIR (supports both quoted and unquoted values)
+    SAVE_DIR=$(grep "SAVE_DIR:" "$CONFIG_FILE" | cut -d ' ' -f 2 | sed -e "s/^'//" -e "s/'$//" -e 's/^"//' -e 's/"$//')
+    
+    if [ -z "$SAVE_DIR" ]; then
+        echo "Error: Missing SAVE_DIR parameter in the configuration file" >&2
+        exit 1
+    fi
+    
+    # Expand ~ to an absolute path
+    eval SAVE_DIR="$SAVE_DIR"
+    echo "$SAVE_DIR"
+}
+
+SAVE_DIR=$(get_save_dir)
+
+# --------------------------
+# Git Initialization Module (One-Time Execution)
+# --------------------------
+
+init_git_once() {
+    if [ ! -d "$SAVE_DIR/.git" ]; then
+        echo "🔄 Initializing Git repository in $SAVE_DIR"
+        git -C "$SAVE_DIR" init > /dev/null
+        
+        # Create an initial commit
+        git -C "$SAVE_DIR" add .
+        git -C "$SAVE_DIR" commit -m "Initial commit: Initialized repository via canvas-pull" > /dev/null
+        echo "✅ Git repository initialization completed"
+    fi
+}
+
+# --------------------------
+# Auto-Commit Module
+# --------------------------
+
+auto_commit() {
+    git add *
+
+    # Check if there are any uncommitted changes
+    if git -C "$SAVE_DIR" diff --quiet --cached && git -C "$SAVE_DIR" diff --quiet; then
+        echo "📦 No changes to commit"
+        return
+    fi
+
+    # Generate a commit message with a timestamp
+    TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+    COMMIT_MSG="Auto commit: Changes at $TIMESTAMP"
+
+    # Perform the commit
+    git -C "$SAVE_DIR" add . > /dev/null
+    git -C "$SAVE_DIR" commit -m "$COMMIT_MSG" > /dev/null
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ Changes committed: $COMMIT_MSG"
+    else
+        echo "❌ Commit failed. Please check the Git status" >&2
+        exit 1
+    fi
+}
+
+# --------------------------
+# Main Function
+# --------------------------
+
+main() {
+    # Ensure the save directory exists
+    mkdir -p "$SAVE_DIR"
+    
+    # Initialize Git (one-time setup)
+    init_git_once
+    
+    python main.py
+    
+    # Automatically commit changes
+    echo "🔍 Checking for file changes..."
+    auto_commit
+}
+
+# Execute the main function
+main
