@@ -23,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: |
         conda env create --file=config.yml
-        conda activate myenv  # Replace 'myenv' with the actual environment name defined in your config.yml
+        conda activate WEBSITE ACCESS_TOKEN
 
     # Lint with flake8
     - name: Lint with flake8
