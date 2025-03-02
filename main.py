@@ -2,7 +2,7 @@ import yaml
 from CanvasFileFetcher import CanvasFileFetcher
 
 config = yaml.safe_load(open('config.yml', 'r'))
-fetcher = CanvasFileFetcher(config['WEBSITE'], config['ACCESS_TOKEN'])
+fetcher = CanvasFileFetcher(config['WEBSITE'], config['ACCESS_TOKEN'], config['SAVE_DIR'])
 
 fetcher.collect_files()
 

@@ -8,7 +8,7 @@
 
 Canvas Pull is a Python project designed to automate content retrieval tasks from Canvas.
 
-# Installation
+# General Installation
 
 1. Generate your API access token
 
@@ -17,8 +17,9 @@ Canvas Pull is a Python project designed to automate content retrieval tasks fro
 2. Edit `config.yml`
 
     ```yaml
-    WEBSITE: oc.sjtu.edu.cn # Domain of your institute (Should be based on Canvas LMS)
-    ACCESS_TOKEN: xxxxxx    # Your API access token
+    WEBSITE: oc.sjtu.edu.cn # Domain of your institute (Should be based on Canvas LMS).
+    ACCESS_TOKEN: xxxxxx    # Your API access token. You can get it from your Canvas LMS.
+    SAVE_DIR: .             # Directory to save the data. Default is the current directory.
     ```
 
 3. Run `main.py`
