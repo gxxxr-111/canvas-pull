@@ -14,9 +14,16 @@ Canvas Pull is a Python project designed to automate content retrieval tasks fro
 
     [How to generate?](https://community.canvaslms.com/t5/Canvas-Basics-Guide/How-do-I-manage-API-access-tokens-in-my-user-account/ta-p/615312)
 
-    > [!WARNING]  
-    > 1. **NEVER** share your API access token, otherwise it could be used maliciously.
-    > 2. Generate **short-term** API access tokens and update them frequently to ensure safety.
+    <div style="border-left: 3px solid #f39c12; padding-left: 10px; margin-bottom: 2px; font-family: sans-serif; font-size: 14px; ">
+    <div style="padding-bottom: 5px">    
+        <strong style="color: #856404; ">⚠️ Warning</strong>
+    </div>
+    <ol>
+        <li><strong>NEVER</strong> share your API access token, otherwise it could be used maliciously.</li>
+        <li>Generate <strong>short-term</strong> API access tokens and update them frequently to ensure safety.</li>
+    </ol>
+    </div>
+
 
 2. Edit `config.yml`
 
@@ -64,8 +71,16 @@ Canvas Pull is a Python project designed to automate content retrieval tasks fro
     # or . ~/.bashrc
     ``` 
 
-    > [!NOTE]  
-    > For macOS users using `zsh`, just replace `.bashrc` with `.zshrc`.
+
+    <div style="border-left: 3px solid rgb(34, 80, 207); padding-left: 10px; margin-bottom: 2px; font-family: sans-serif; font-size: 14px; ">
+    <div style="padding-bottom: 5px">    
+        <strong style="color: rgb(34, 80, 207);">💡 Note</strong>
+    </div>
+    
+    For macOS users using `zsh`, just replace `.bashrc` with `.zshrc`.
+
+    </div>
+
 
 3. Run in bash
 
