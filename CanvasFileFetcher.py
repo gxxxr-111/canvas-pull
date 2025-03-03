@@ -78,7 +78,7 @@ class CanvasFileFetcher:
                     'File URL': file['url']
                 }) 
                 else:
-                    print(f"Skipping: {file['display_name']}
+                    print(f"Skipping: {file['display_name']}")
 
     def export_to_csv(self, filename: str = 'canvas_files.csv'):
         if not self.file_records:
