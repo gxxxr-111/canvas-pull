@@ -70,7 +70,8 @@ class CanvasFileFetcher:
                 folder_path = self.build_folder_path(file['folder_id'])
 
                 # Save info
-                self.file_records.append({
+                if file['url'] != "":
+                    self.file_records.append({
                     'Course Name': course_name,
                     'Folder Path': folder_path,
                     'File Name': file['display_name'],
