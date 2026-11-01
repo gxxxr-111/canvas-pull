@@ -14,6 +14,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#commands">Commands</a> ·
+  <a href="#use-with-ai-agents">AI agents</a> ·
   <a href="#faq">FAQ</a> ·
   <a href="#中文说明">中文说明</a>
 </p>
@@ -44,6 +45,8 @@ renamed/moved or deleted**. It can run on its own every morning and notify you.
   skip it (use `--refresh` to scan it again).
 - **Safe token storage.** `init` stores your token in the system keychain, not in a text file.
 - **Optional git.** `sync --git` commits each sync in the save folder.
+- **Made for scripts and AI agents.** Every command has `--json` output and stable exit codes,
+  and there's an agent skill / Claude Code plugin.
 - **Read-only and private.** Only reads from Canvas; no telemetry, nothing leaves your machine.
 - **Fast.** Courses are scanned in parallel (a 32-course account scans in about 10 s instead of
   75 s), with parallel downloads, automatic retries with back-off and full pagination.
@@ -82,6 +85,50 @@ To get the latest unreleased code: `uv tool install git+https://github.com/gxxxr
 | `canvas-pull schedule enable [--at 08:00 ...] [--every 6h]` | Sync automatically (launchd on macOS, systemd timer on Linux). Default: daily 09:00. |
 | `canvas-pull schedule status \| run \| disable` | Show the schedule and its log, trigger it now, or remove it. |
 | `canvas-pull config` | Show settings in use. |
+
+## Use with AI agents
+
+canvas-pull is a plain CLI, so AI coding agents (Claude Code, Codex, Cursor, …) can run it
+directly. Ask *"anything new in my courses?"* or *"summarize this week's new slides"* and the
+agent syncs, reads the changed files and answers.
+
+**Install the skill** so your agent knows how to use it:
+
+```
+/plugin install canvas-pull --marketplace gxxxr-111/canvas-pull
+```
+
+The skill is in [`skills/canvas-pull/SKILL.md`](skills/canvas-pull/SKILL.md). Other agents that
+support Agent Skills can use that file as is.
+
+**JSON output.** Add `--json` to `status`, `sync`, `log`, `courses`, `config` or `init`, and stdout
+holds exactly one JSON object, also on errors:
+
+```bash
+canvas-pull log --since 7d --json | jq -r '.changes[] | select(.kind=="new") | .local_path'
+```
+
+Each change has `kind`, `course`, `path`, `local_path` (and `old_path` for moves).
+
+**Exit codes**
+
+| Code | Meaning |
+| --- | --- |
+| 0 | OK |
+| 1 | Network or Canvas error |
+| 2 | Invalid arguments |
+| 3 | Not configured / invalid settings |
+| 4 | Token rejected or expired |
+| 5 | Finished, but some downloads or courses failed |
+| 6 | Another sync is running |
+
+**Non-interactive setup** (CI, dotfiles, servers):
+
+```bash
+canvas-pull init --url oc.sjtu.edu.cn --save-dir ~/Canvas --token-stdin < token.txt
+```
+
+Agents should never handle your token. Run `canvas-pull init` yourself.
 
 ## Configuration
 
@@ -184,6 +231,10 @@ No. It only sends read (`GET`) requests.
 Create a new one in Canvas and run `canvas-pull init` again. Scheduled syncs show a notification
 when the token is rejected.
 
+**Can it put assignment deadlines in my calendar?**
+Canvas already can. Open the Canvas **Calendar**, click **Calendar Feed**, and subscribe to
+that link in Apple Calendar, Google Calendar or Outlook.
+
 **How do I skip a course?**
 Add its ID or part of its name to `exclude` in the config file (`canvas-pull courses` shows IDs).
 
@@ -242,4 +293,6 @@ canvas-pull schedule enable --at 08:00   # 每天早上自动同步，有变化�
 - 多门课并行扫描，32 门课大约 10 秒扫完。
 - `sync --git` 会在保存目录里自动提交一次 git，方便用 `git log` 回看。
 - 只读取 Canvas，不会修改任何内容；没有遥测，数据不离开你的电脑。
+- 所有命令都支持 `--json` 输出和固定的退出码，方便脚本和 AI 助手调用。在 Claude Code 里运行 `/plugin install canvas-pull --marketplace gxxxr-111/canvas-pull` 安装技能后，就可以直接问「我的课程这周有什么更新？帮我总结新课件」。
+- 作业截止日期：在 Canvas 的「日历」页面点「日历订阅源」，把链接加到系统日历即可，无需本工具。
 - 在你的学校试过了？欢迎提交一个 [School report](https://github.com/gxxxr-111/canvas-pull/issues/new?template=school_report.yml)，无论成功与否。

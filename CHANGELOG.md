@@ -6,7 +6,20 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-01
+
+### Added
+- `--json` on `status`, `sync`, `log`, `courses`, `config` and `init`: one JSON object on stdout,
+  also for errors. Each change includes `local_path`.
+- Stable exit codes: 3 not configured, 4 token rejected, 5 partly failed, 6 another sync running
+  (1 is still a network/Canvas error, 2 invalid arguments).
+- Non-interactive `init`: `--url`, `--save-dir`, `--token-stdin`, `--no-input`.
+- Agent skill (`skills/canvas-pull/SKILL.md`) and a Claude Code plugin:
+  `/plugin install canvas-pull --marketplace gxxxr-111/canvas-pull`.
+
 ### Changed
+- A course that can't be scanned now makes `sync`/`status` exit with 5 instead of 0.
+- Token rejected now exits with 4 instead of 1.
 - GitHub Actions are pinned to commit SHAs and updated to their latest versions
   (checkout v7, setup-uv v10, upload-artifact v7, download-artifact v8). CI now also tests the
   build-artifact hand-off used by releases.
@@ -81,6 +94,7 @@ Complete rewrite as an installable CLI.
 
 - First version: download all files of enrolled courses.
 
-[Unreleased]: https://github.com/gxxxr-111/canvas-pull/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/gxxxr-111/canvas-pull/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/gxxxr-111/canvas-pull/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/gxxxr-111/canvas-pull/compare/v1.0.0...v2.4.0
 [1.0.0]: https://github.com/gxxxr-111/canvas-pull/releases/tag/v1.0.0

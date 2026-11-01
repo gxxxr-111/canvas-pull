@@ -1,11 +1,19 @@
-"""Command-line interface."""
+"""Command-line interface.
+
+Every data command accepts --json: stdout then carries exactly one JSON object (also on
+errors), and human-oriented output is switched off. Exit codes are stable; see `ExitCode`.
+"""
 
 from __future__ import annotations
 
+import json
+import os
+import sys
 from collections import defaultdict
 from contextlib import nullcontext
+from enum import IntEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -15,7 +23,7 @@ from rich.table import Table
 from . import __version__, notify
 from . import schedule as sched
 from .api import AuthError, CanvasClient, CanvasError
-from .collector import CourseScan, course_dirnames, list_courses, scan_courses
+from .collector import CourseScan, RemoteFile, course_dirnames, list_courses, scan_courses
 from .config import (
     DEFAULT_SAVE_DIR,
     Config,
@@ -40,6 +48,31 @@ app = typer.Typer(
 console = Console(highlight=False)
 err = Console(stderr=True, highlight=False)
 
+
+class ExitCode(IntEnum):
+    OK = 0
+    ERROR = 1  # network or Canvas error
+    USAGE = 2  # bad command-line arguments (Typer's own code)
+    CONFIG = 3  # not configured, or invalid settings
+    AUTH = 4  # Canvas rejected the token (invalid or expired)
+    PARTIAL = 5  # finished, but some downloads or courses failed
+    BUSY = 6  # another sync is running on the same folder
+
+
+_ERROR_TYPES = {
+    ExitCode.ERROR: "canvas",
+    ExitCode.CONFIG: "config",
+    ExitCode.AUTH: "auth",
+    ExitCode.BUSY: "busy",
+}
+
+JsonOpt = Annotated[
+    bool,
+    typer.Option("--json", help="Print one JSON object on stdout (for scripts and AI agents)."),
+]
+
+_json_mode = False
+
 STYLE = {
     Kind.NEW: ("+", "green"),
     Kind.MODIFIED: ("~", "yellow"),
@@ -49,9 +82,25 @@ STYLE = {
 }
 
 
-def _fail(message: str) -> typer.Exit:
-    err.print(f"[red]Error:[/] {message}")
-    return typer.Exit(1)
+def _start(json_: bool) -> None:
+    """Called first by every command: in JSON mode, silence human output."""
+    global _json_mode
+    _json_mode = json_
+    console.quiet = json_
+
+
+def _emit(data: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    sys.stdout.flush()
+
+
+def _fail(message: str, code: ExitCode = ExitCode.ERROR) -> typer.Exit:
+    if _json_mode:
+        kind = _ERROR_TYPES.get(code, "error")
+        _emit({"ok": False, "error": {"type": kind, "message": message, "exit_code": int(code)}})
+    else:
+        err.print(f"[red]Error:[/] {message}")
+    return typer.Exit(int(code))
 
 
 def _pretty(path: Path) -> str:
@@ -66,7 +115,12 @@ def _load(require_token: bool = True) -> Config:
     try:
         return load_config(require_token=require_token)
     except ConfigError as exc:
-        raise _fail(str(exc)) from None
+        raise _fail(str(exc), ExitCode.CONFIG) from None
+
+
+def _canvas_failure(exc: CanvasError) -> typer.Exit:
+    code = ExitCode.AUTH if isinstance(exc, AuthError) else ExitCode.ERROR
+    return _fail(str(exc), code)
 
 
 def _matches(course: Course, patterns: list[str]) -> bool:
@@ -91,40 +145,85 @@ def main(
 
 
 @app.command()
-def init() -> None:
-    """Set your Canvas URL, save folder and access token."""
+def init(
+    url: Annotated[
+        str | None, typer.Option("--url", help="Canvas site, e.g. oc.sjtu.edu.cn.")
+    ] = None,
+    save_dir_opt: Annotated[
+        Path | None, typer.Option("--save-dir", help="Folder to save files in.")
+    ] = None,
+    token_stdin: Annotated[
+        bool, typer.Option("--token-stdin", help="Read the access token from stdin.")
+    ] = False,
+    no_input: Annotated[
+        bool, typer.Option("--no-input", help="Never prompt; fail if something is missing.")
+    ] = False,
+    json_: JsonOpt = False,
+) -> None:
+    """Set your Canvas URL, save folder and access token.
+
+    Non-interactive: canvas-pull init --url oc.sjtu.edu.cn --save-dir ~/Canvas --token-stdin
+    (the token can also come from CANVAS_TOKEN).
+    """
+    _start(json_)
+    interactive = not (no_input or json_ or token_stdin)
     try:
         current = load_config(require_token=False)
     except ConfigError:
         current = None
 
-    console.print(
-        "Create a token in Canvas: [bold]Account → Settings → New Access Token[/].\n"
-        "The token is stored in your system keychain.\n"
-    )
-    website = normalize_website(
-        typer.prompt("Canvas URL", default=current.website if current else "oc.sjtu.edu.cn")
-    )
-    save_dir = (
-        Path(
-            typer.prompt(
-                "Save files to", default=str(current.save_dir) if current else DEFAULT_SAVE_DIR
-            )
+    def ask(label: str, default: str | None, hide: bool = False) -> str:
+        if not interactive:
+            if default:
+                return default
+            raise _fail(f"Missing {label}; pass it as an option.", ExitCode.CONFIG)
+        return typer.prompt(label, default=default, hide_input=hide)
+
+    if interactive:
+        console.print(
+            "Create a token in Canvas: [bold]Account → Settings → New Access Token[/].\n"
+            "The token is stored in your system keychain.\n"
         )
-        .expanduser()
-        .resolve()
+    website_raw = url or ask(
+        "Canvas URL", current.website if current else ("oc.sjtu.edu.cn" if interactive else None)
     )
-    token = typer.prompt("Access token", hide_input=True).strip()
+    try:
+        website = normalize_website(website_raw)
+    except ConfigError as exc:
+        raise _fail(str(exc), ExitCode.CONFIG) from None
+    default_dir = str(current.save_dir) if current else DEFAULT_SAVE_DIR
+    save_dir = Path(save_dir_opt or ask("Save files to", default_dir)).expanduser().resolve()
+
+    if token_stdin:
+        token = sys.stdin.readline().strip()
+    else:
+        token = os.environ.get("CANVAS_TOKEN", "") or ask("Access token", None, hide=True)
+    token = token.strip()
+    if not token:
+        raise _fail("No access token given.", ExitCode.CONFIG)
 
     try:
         with CanvasClient(website, token) as client:
             me = client.get("users/self")
     except CanvasError as exc:
-        raise _fail(f"Could not sign in to {website}: {exc}") from None
+        code = ExitCode.AUTH if isinstance(exc, AuthError) else ExitCode.ERROR
+        raise _fail(f"Could not sign in to {website}: {exc}", code) from None
 
     cfg = current or Config(website=website, save_dir=save_dir)
     cfg.website, cfg.save_dir, cfg.token = website, save_dir, token
     where = save_config(cfg)
+    if json_:
+        _emit(
+            {
+                "ok": True,
+                "user": me.get("name"),
+                "website": website,
+                "save_dir": str(save_dir),
+                "config_file": str(default_config_file()),
+                "token_stored_in": where,
+            }
+        )
+        return
     console.print(f"[green]✓[/] Signed in as [bold]{me.get('name', '?')}[/].")
     console.print(f"Settings: {default_config_file()}  ·  token: {where}")
     console.print("Next: [bold]canvas-pull sync[/]")
@@ -137,16 +236,36 @@ def courses(
         bool | None,
         typer.Option("--completed/--no-completed", help="Include completed (concluded) courses."),
     ] = None,
+    json_: JsonOpt = False,
 ) -> None:
     """List the courses that would be synced."""
+    _start(json_)
     cfg = _load()
     with_completed = cfg.include_completed if completed is None else completed
     try:
         with _client(cfg) as client:
             found = list_courses(client, include_past=all_, include_completed=with_completed)
     except CanvasError as exc:
-        raise _fail(str(exc)) from None
+        raise _canvas_failure(exc) from None
 
+    if json_:
+        _emit(
+            {
+                "ok": True,
+                "courses": [
+                    {
+                        "id": c.id,
+                        "name": c.label,
+                        "code": c.course_code,
+                        "term": c.term.name if c.term else None,
+                        "completed": c.completed,
+                        "excluded": _matches(c, cfg.exclude),
+                    }
+                    for c in found
+                ],
+            }
+        )
+        return
     table = Table(box=None, header_style="bold")
     table.add_column("ID", justify="right")
     table.add_column("Course")
@@ -203,10 +322,13 @@ def _scan(
 _KIND_ORDER = {Kind.NEW: 0, Kind.MODIFIED: 1, Kind.MOVED: 2, Kind.RESTORED: 3, Kind.DELETED: 4}
 
 
+def _sorted(changes: list[Change]) -> list[Change]:
+    return sorted(changes, key=lambda c: (c.course.lower(), _KIND_ORDER[c.kind], c.path.lower()))
+
+
 def _print_changes(changes: list[Change]) -> None:
     by_course: dict[str, list[Change]] = defaultdict(list)
-    ordered = sorted(changes, key=lambda c: (c.course.lower(), _KIND_ORDER[c.kind], c.path.lower()))
-    for c in ordered:
+    for c in _sorted(changes):
         by_course[c.course].append(c)
     for course, items in by_course.items():
         console.print(f"\n[bold]{course}[/]")
@@ -224,6 +346,43 @@ def _summary(changes: list[Change]) -> str:
         counts[c.kind] += 1
     parts = [f"[{STYLE[k][1]}]{n} {k}[/]" for k, n in counts.items()]
     return ", ".join(parts) if parts else "no changes"
+
+
+def _counts(changes: list[Change]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for c in changes:
+        counts[str(c.kind)] += 1
+    return dict(counts)
+
+
+def _change_json(c: Change, save_dir: Path) -> dict[str, Any]:
+    d = c.to_dict()
+    d["local_path"] = str(save_dir / c.path)
+    return d
+
+
+def _sync_json(
+    *,
+    dry_run: bool,
+    save_dir: Path,
+    changes: list[Change],
+    failed: list[tuple[Change, str]] = (),  # type: ignore[assignment]
+    locked: list[RemoteFile] = (),  # type: ignore[assignment]
+    scans: list[CourseScan] = (),  # type: ignore[assignment]
+    archived: int = 0,
+) -> dict[str, Any]:
+    skipped = [{"course": s.course.label, "error": s.error} for s in scans if s.error]
+    return {
+        "ok": not failed and not skipped,
+        "dry_run": dry_run,
+        "save_dir": str(save_dir),
+        "summary": _counts(changes),
+        "changes": [_change_json(c, save_dir) for c in _sorted(changes)],
+        "failed": [{"course": c.course, "path": c.path, "error": e} for c, e in failed],
+        "locked": [{"course": rf.course.label, "path": rf.path} for rf in locked],
+        "skipped_courses": skipped,
+        "archived_courses_skipped": archived,
+    }
 
 
 def _alert(enabled: bool, message: str) -> None:
@@ -257,15 +416,17 @@ def sync(
     refresh: Annotated[
         bool, typer.Option("--refresh", help="Scan archived completed courses again.")
     ] = False,
+    json_: JsonOpt = False,
 ) -> None:
     """Download new and changed files from your active courses."""
-    if not console.is_terminal and not dry_run:
+    _start(json_)
+    if not console.is_terminal and not dry_run and not json_:
         console.print(f"--- {now_iso()} canvas-pull sync")  # separator in scheduled-run logs
     try:
         cfg = load_config()
     except ConfigError as exc:
         _alert(notify_, f"Sync failed: {exc}")
-        raise _fail(str(exc)) from None
+        raise _fail(str(exc), ExitCode.CONFIG) from None
     use_git = cfg.git if git is None else git
     with_completed = cfg.include_completed if completed is None else completed
     manifest = Manifest.load(cfg.save_dir)
@@ -284,22 +445,46 @@ def sync(
             if not scans:
                 if not archived:
                     console.print("No matching active courses.")
+                if json_:
+                    _emit(
+                        _sync_json(
+                            dry_run=dry_run, save_dir=cfg.save_dir, changes=[], archived=archived
+                        )
+                    )
                 return
             plan = make_plan(scans, manifest, cfg.save_dir)
 
             for s in scans:
                 if s.error:
-                    err.print(f"[yellow]![/] Skipped {s.course.label}: {s.error}")
+                    if not json_:
+                        err.print(f"[yellow]![/] Skipped {s.course.label}: {s.error}")
                 elif s.files_tab_hidden:
                     console.print(
                         f"[dim]{s.course.label}: Files tab hidden; used Modules instead.[/]"
                     )
+            scan_failed = any(s.error for s in scans)
 
             if dry_run:
-                _print_changes(plan.changes)
-                console.print(f"\n{_summary(plan.changes)} · {_pretty(cfg.save_dir)}")
-                if plan.locked:
-                    console.print(f"[dim]{len(plan.locked)} locked file(s) not yet available.[/]")
+                if json_:
+                    _emit(
+                        _sync_json(
+                            dry_run=True,
+                            save_dir=cfg.save_dir,
+                            changes=plan.changes,
+                            locked=plan.locked,
+                            scans=scans,
+                            archived=archived,
+                        )
+                    )
+                else:
+                    _print_changes(plan.changes)
+                    console.print(f"\n{_summary(plan.changes)} · {_pretty(cfg.save_dir)}")
+                    if plan.locked:
+                        console.print(
+                            f"[dim]{len(plan.locked)} locked file(s) not yet available.[/]"
+                        )
+                if scan_failed:
+                    raise typer.Exit(int(ExitCode.PARTIAL))
                 return
 
             total = sum(1 for c in plan.changes if c.needs_download)
@@ -328,39 +513,54 @@ def sync(
                 finally:
                     manifest.save()
     except SyncLocked:
-        raise _fail("Another sync is already running for this folder.") from None
+        raise _fail("Another sync is already running for this folder.", ExitCode.BUSY) from None
     except AuthError as exc:
         _alert(notify_, "Sync failed: Canvas rejected your token. Run `canvas-pull init`.")
-        raise _fail(str(exc)) from None
+        raise _canvas_failure(exc) from None
     except CanvasError as exc:
         if exc.status is not None:  # stay quiet when simply offline
             _alert(notify_, f"Sync failed: {exc}")
-        raise _fail(str(exc)) from None
-
-    _print_changes(result.applied)
-    for change, reason in result.failed:
-        err.print(f"[red]✗[/] {change.path}: {reason}")
-    console.print(f"\n{_summary(result.applied)} · {_pretty(cfg.save_dir)}")
-    if plan.locked:
-        console.print(f"[dim]{len(plan.locked)} locked file(s) not yet available.[/]")
+        raise _canvas_failure(exc) from None
 
     if result.applied:
         record = {"time": now_iso(), "changes": [c.to_dict() for c in result.applied]}
         append_log(cfg.save_dir, record)
+    git_summary = None
     if use_git:
         try:
-            summary = commit_sync(cfg.save_dir, result.applied)
-            if summary:
-                console.print(f"[dim]git: {summary}[/]")
+            git_summary = commit_sync(cfg.save_dir, result.applied)
         except GitError as exc:
-            err.print(f"[yellow]git commit skipped:[/] {exc}")
+            if not json_:
+                err.print(f"[yellow]git commit skipped:[/] {exc}")
     if result.applied or result.failed:
         message = notify.describe(result.applied)
         if result.failed:
             message = f"{message} · {len(result.failed)} failed".lstrip(" ·")
         _alert(notify_, message)
-    if result.failed:
-        raise typer.Exit(1)
+
+    if json_:
+        data = _sync_json(
+            dry_run=False,
+            save_dir=cfg.save_dir,
+            changes=result.applied,
+            failed=result.failed,
+            locked=plan.locked,
+            scans=scans,
+            archived=archived,
+        )
+        data["git_commit"] = git_summary
+        _emit(data)
+    else:
+        _print_changes(result.applied)
+        for change, reason in result.failed:
+            err.print(f"[red]✗[/] {change.path}: {reason}")
+        console.print(f"\n{_summary(result.applied)} · {_pretty(cfg.save_dir)}")
+        if plan.locked:
+            console.print(f"[dim]{len(plan.locked)} locked file(s) not yet available.[/]")
+        if git_summary:
+            console.print(f"[dim]git: {git_summary}[/]")
+    if result.failed or scan_failed:
+        raise typer.Exit(int(ExitCode.PARTIAL))
 
 
 @app.command()
@@ -375,6 +575,7 @@ def status(
     refresh: Annotated[
         bool, typer.Option("--refresh", help="Scan archived completed courses again.")
     ] = False,
+    json_: JsonOpt = False,
 ) -> None:
     """Show what changed on Canvas since the last sync (downloads nothing)."""
     sync(
@@ -385,6 +586,7 @@ def status(
         git=False,
         notify_=False,
         refresh=refresh,
+        json_=json_,
     )
 
 
@@ -397,15 +599,41 @@ def log(
             "--since", "-s", help="Net summary since 7d, 24h, 2w, today or a date (2026-10-01)."
         ),
     ] = None,
+    json_: JsonOpt = False,
 ) -> None:
     """Show recent syncs, or a merged summary with --since (e.g. --since 7d)."""
+    _start(json_)
     cfg = _load(require_token=False)
     if since:
         try:
             start = parse_since(since)
         except ValueError as exc:
-            raise _fail(str(exc)) from None
+            raise _fail(str(exc), ExitCode.USAGE) from None
         net = summarize(read_log(cfg.save_dir, None), start)
+        if json_:
+            counts: dict[str, int] = defaultdict(int)
+            for n in net:
+                counts[n.kind] += 1
+            _emit(
+                {
+                    "ok": True,
+                    "since": start.isoformat(),
+                    "save_dir": str(cfg.save_dir),
+                    "summary": dict(counts),
+                    "changes": [
+                        {
+                            "kind": n.kind,
+                            "course": n.course,
+                            "path": n.path,
+                            **({"old_path": n.old_path} if n.old_path else {}),
+                            "time": n.time,
+                            "local_path": str(cfg.save_dir / n.path),
+                        }
+                        for n in net
+                    ],
+                }
+            )
+            return
         local = start.astimezone().strftime("%Y-%m-%d %H:%M")
         if not net:
             console.print(f"No changes since {local}.")
@@ -415,10 +643,10 @@ def log(
         for n in net:
             by_course[n.course].append(n)
         for course_name, items in by_course.items():
-            counts: dict[str, int] = defaultdict(int)
+            tally_counts: dict[str, int] = defaultdict(int)
             for n in items:
-                counts[n.kind] += 1
-            tally = ", ".join(f"{v} {k}" for k, v in counts.items())
+                tally_counts[n.kind] += 1
+            tally = ", ".join(f"{v} {k}" for k, v in tally_counts.items())
             console.print(f"\n[bold]{course_name}[/]  [dim]{tally}[/]")
             for n in items:
                 mark, color = STYLE[Kind(n.kind)]
@@ -429,6 +657,9 @@ def log(
         return
 
     records = read_log(cfg.save_dir, limit)
+    if json_:
+        _emit({"ok": True, "save_dir": str(cfg.save_dir), "syncs": list(reversed(records))})
+        return
     if not records:
         console.print("No syncs recorded yet.")
         return
@@ -442,25 +673,34 @@ def log(
 
 
 @app.command("config")
-def show_config() -> None:
+def show_config(json_: JsonOpt = False) -> None:
     """Show the settings in use (token hidden)."""
+    _start(json_)
     cfg = _load(require_token=False)
-    token = "set" if cfg.token else "missing"
+    values: dict[str, Any] = {
+        "config_file": str(default_config_file()),
+        "website": cfg.website,
+        "save_dir": str(cfg.save_dir),
+        "token": "set" if cfg.token else "missing",
+        "concurrency": cfg.concurrency,
+        "scan_concurrency": cfg.scan_concurrency,
+        "keep_history": cfg.keep_history,
+        "git": cfg.git,
+        "exclude": cfg.exclude,
+        "include_completed": cfg.include_completed,
+        "sources": cfg.sources,
+    }
+    if json_:
+        _emit({"ok": True, **values})
+        return
     table = Table(box=None, show_header=False)
-    for key, value in [
-        ("config file", str(default_config_file())),
-        ("website", cfg.website),
-        ("save_dir", _pretty(cfg.save_dir)),
-        ("token", token),
-        ("concurrency", str(cfg.concurrency)),
-        ("scan_concurrency", str(cfg.scan_concurrency)),
-        ("keep_history", str(cfg.keep_history)),
-        ("git", str(cfg.git)),
-        ("exclude", ", ".join(cfg.exclude) or "-"),
-        ("include_completed", str(cfg.include_completed)),
-        ("sources", ", ".join(cfg.sources)),
-    ]:
-        table.add_row(f"[bold]{key}[/]", value)
+    for key, value in values.items():
+        if key == "save_dir":
+            value = _pretty(cfg.save_dir)
+        elif isinstance(value, list):
+            value = ", ".join(value) or "-"
+        label = "config file" if key == "config_file" else key
+        table.add_row(f"[bold]{label}[/]", str(value))
     console.print(table)
 
 
@@ -482,12 +722,13 @@ def schedule_enable(
     ] = None,
 ) -> None:
     """Install (or replace) the automatic sync."""
+    _start(False)
     _load()  # fail now, not silently at 9am
     try:
         spec = sched.parse_spec(at or [], every)
         path = sched.enable(spec, workdir=Path.cwd())
     except sched.ScheduleError as exc:
-        raise _fail(str(exc)) from None
+        raise _fail(str(exc), ExitCode.CONFIG) from None
     cmd = sched.command()
     console.print(f"[green]✓[/] canvas-pull will sync [bold]{spec.describe()}[/].")
     console.print(f"[dim]Job: {path}\nCommand: {' '.join(cmd)}\nLog: {sched.log_file()}[/]")
