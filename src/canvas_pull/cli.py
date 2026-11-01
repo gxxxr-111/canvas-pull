@@ -248,8 +248,7 @@ def sync(
                     err.print(f"[yellow]![/] Skipped {s.course.label}: {s.error}")
                 elif s.files_tab_hidden:
                     console.print(
-                        f"[dim]{s.course.label}: Files tab hidden; "
-                        "found files through modules, assignments and pages.[/]"
+                        f"[dim]{s.course.label}: Files tab hidden; used Modules instead.[/]"
                     )
 
             if dry_run:
