@@ -1,0 +1,14 @@
+{
+  "name": "canvas-pull",
+  "owner": {
+    "name": "Mirage_"
+  },
+  "description": "canvas-pull: sync and summarize your Canvas LMS course files from your AI agent.",
+  "plugins": [
+    {
+      "name": "canvas-pull",
+      "source": "./",
+      "description": "Sync and summarize your Canvas LMS course files from your AI agent."
+    }
+  ]
+}

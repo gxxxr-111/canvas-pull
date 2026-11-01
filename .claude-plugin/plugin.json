@@ -1,0 +1,10 @@
+{
+  "name": "canvas-pull",
+  "description": "Teach your AI agent to sync and summarize your Canvas LMS course files with the canvas-pull CLI.",
+  "version": "2.5.0",
+  "author": { "name": "Mirage_" },
+  "homepage": "https://github.com/gxxxr-111/canvas-pull",
+  "repository": "https://github.com/gxxxr-111/canvas-pull",
+  "license": "MIT",
+  "keywords": ["canvas", "lms", "students", "sync"]
+}
