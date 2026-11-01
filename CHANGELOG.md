@@ -6,6 +6,11 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- GitHub Actions are pinned to commit SHAs and updated to their latest versions
+  (checkout v7, setup-uv v10, upload-artifact v7, download-artifact v8). CI now also tests the
+  build-artifact hand-off used by releases.
+
 ## [2.4.0] - 2026-11-01
 
 First release on PyPI: `uv tool install canvas-pull` or `pipx install canvas-pull`.
