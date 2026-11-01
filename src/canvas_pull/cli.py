@@ -37,8 +37,8 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="rich",
 )
-console = Console()
-err = Console(stderr=True)
+console = Console(highlight=False)
+err = Console(stderr=True, highlight=False)
 
 STYLE = {
     Kind.NEW: ("+", "green"),
@@ -52,6 +52,14 @@ STYLE = {
 def _fail(message: str) -> typer.Exit:
     err.print(f"[red]Error:[/] {message}")
     return typer.Exit(1)
+
+
+def _pretty(path: Path) -> str:
+    """Show paths under the home folder as ~/..."""
+    try:
+        return "~/" + path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _load(require_token: bool = True) -> Config:
@@ -192,9 +200,13 @@ def _scan(
     return scans, len(found) - len(todo)
 
 
+_KIND_ORDER = {Kind.NEW: 0, Kind.MODIFIED: 1, Kind.MOVED: 2, Kind.RESTORED: 3, Kind.DELETED: 4}
+
+
 def _print_changes(changes: list[Change]) -> None:
     by_course: dict[str, list[Change]] = defaultdict(list)
-    for c in changes:
+    ordered = sorted(changes, key=lambda c: (c.course.lower(), _KIND_ORDER[c.kind], c.path.lower()))
+    for c in ordered:
         by_course[c.course].append(c)
     for course, items in by_course.items():
         console.print(f"\n[bold]{course}[/]")
@@ -285,7 +297,7 @@ def sync(
 
             if dry_run:
                 _print_changes(plan.changes)
-                console.print(f"\n{_summary(plan.changes)} · {cfg.save_dir}")
+                console.print(f"\n{_summary(plan.changes)} · {_pretty(cfg.save_dir)}")
                 if plan.locked:
                     console.print(f"[dim]{len(plan.locked)} locked file(s) not yet available.[/]")
                 return
@@ -328,7 +340,7 @@ def sync(
     _print_changes(result.applied)
     for change, reason in result.failed:
         err.print(f"[red]✗[/] {change.path}: {reason}")
-    console.print(f"\n{_summary(result.applied)} · {cfg.save_dir}")
+    console.print(f"\n{_summary(result.applied)} · {_pretty(cfg.save_dir)}")
     if plan.locked:
         console.print(f"[dim]{len(plan.locked)} locked file(s) not yet available.[/]")
 
@@ -438,7 +450,7 @@ def show_config() -> None:
     for key, value in [
         ("config file", str(default_config_file())),
         ("website", cfg.website),
-        ("save_dir", str(cfg.save_dir)),
+        ("save_dir", _pretty(cfg.save_dir)),
         ("token", token),
         ("concurrency", str(cfg.concurrency)),
         ("scan_concurrency", str(cfg.scan_concurrency)),

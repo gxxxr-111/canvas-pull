@@ -108,16 +108,25 @@ class SyncLocked(Exception):
 
 @contextmanager
 def sync_lock(save_dir: Path) -> Iterator[None]:
+    """Exclusive, non-blocking lock on the save folder (flock on Unix, msvcrt on Windows)."""
     path = save_dir / STATE_DIR / "lock"
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        import fcntl
-    except ImportError:  # Windows: no lock
-        yield
-        return
-    with open(path, "w") as fh:
+    with open(path, "a+") as fh:
         try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            if os.name == "nt":
+                import msvcrt
+
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
             raise SyncLocked from None
-        yield
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)

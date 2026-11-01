@@ -32,6 +32,9 @@ SOURCES: tuple[str, ...] = (
 DEFAULT_SOURCES: tuple[str, ...] = ("files",)
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+_WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {
+    f"{p}{i}" for p in ("COM", "LPT") for i in range(1, 10)
+}
 # Matches /files/123 and /courses/45/files/123 in links, images and API endpoints.
 _FILE_LINK = re.compile(r"/(?:courses/(\d+)/)?files/(\d+)")
 
@@ -40,6 +43,8 @@ def sanitize(name: str, max_len: int = 150) -> str:
     """Make a Canvas name safe as a single path component on macOS/Linux/Windows."""
     name = unicodedata.normalize("NFC", name)
     name = _UNSAFE.sub("_", name).strip().rstrip(". ")
+    if name.split(".", 1)[0].upper() in _WINDOWS_RESERVED:
+        name = "_" + name
     if len(name) > max_len:
         stem, dot, ext = name.rpartition(".")
         if dot and 0 < len(ext) <= 10:

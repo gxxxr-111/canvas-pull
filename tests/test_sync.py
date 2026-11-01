@@ -185,6 +185,7 @@ def test_failed_course_does_not_mark_files_deleted(canvas, tmp_path):
 def test_sanitize():
     assert sanitize('a/b:c*?"<>|.') == "a_b_c______"
     assert sanitize("   ") == "_"
+    assert sanitize("con.pdf") == "_con.pdf" and sanitize("Console.pdf") == "Console.pdf"
     long = "x" * 300 + ".pdf"
     assert sanitize(long).endswith(".pdf") and len(sanitize(long)) <= 150
 

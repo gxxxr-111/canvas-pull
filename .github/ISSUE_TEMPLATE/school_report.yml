@@ -1,0 +1,40 @@
+name: School report
+description: Tell us whether canvas-pull works with your school's Canvas
+labels: [school-report]
+title: "School report: "
+body:
+  - type: input
+    id: site
+    attributes:
+      label: Canvas site
+      placeholder: oc.sjtu.edu.cn
+    validations:
+      required: true
+  - type: input
+    id: school
+    attributes:
+      label: School name
+    validations:
+      required: true
+  - type: dropdown
+    id: works
+    attributes:
+      label: Does it work?
+      options:
+        - "Yes, everything works"
+        - "Partly (see notes)"
+        - "No"
+    validations:
+      required: true
+  - type: dropdown
+    id: token
+    attributes:
+      label: Can students create access tokens?
+      options: ["Yes", "No, the option is disabled", "Not sure"]
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything unusual, such as a hidden Files tab, files only in Modules, or errors. Don't paste tokens.

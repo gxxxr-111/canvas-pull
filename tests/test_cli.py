@@ -4,7 +4,7 @@ import subprocess
 import pytest
 from typer.testing import CliRunner
 
-from canvas_pull import cli
+from canvas_pull import cli, config
 from canvas_pull.api import CanvasClient
 
 from .fake_canvas import BASE, FakeCanvas, FakeCourse, FakeFile
@@ -27,7 +27,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("CANVAS_URL", BASE)
     monkeypatch.setenv("CANVAS_TOKEN", "good-token")
     monkeypatch.setenv("CANVAS_SAVE_DIR", str(tmp_path / "out"))
+    # Never read the developer's real config file during tests.
     monkeypatch.setattr(cli, "default_config_file", lambda: tmp_path / "none.toml")
+    monkeypatch.setattr(config, "default_config_file", lambda: tmp_path / "none.toml")
     return fake, tmp_path / "out"
 
 
