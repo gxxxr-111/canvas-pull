@@ -180,3 +180,57 @@ def test_sanitize():
     assert sanitize("   ") == "_"
     long = "x" * 300 + ".pdf"
     assert sanitize(long).endswith(".pdf") and len(sanitize(long)) <= 150
+
+
+def test_files_linked_from_other_places(tmp_path):
+    fake = FakeCanvas()
+    course = FakeCourse(id=3, name="Bio", files_tab_hidden=True)
+    for fid, name in [(1, "syllabus.pdf"), (2, "hw.pdf"), (3, "notes.pdf"), (4, "ann.pdf")]:
+        course.files[fid] = FakeFile(fid, name, 1, name.encode())
+    course.syllabus = '<a href="/courses/3/files/1/download">Syllabus</a>'
+    course.assignments = [{"id": 1, "name": "HW 1", "description": '<a href="/files/2">hw</a>'}]
+    course.pages = [
+        {"title": "Week 1", "body": '<img src="https://canvas.test/courses/3/files/3/preview">'},
+        {"title": "Dup", "body": '<a href="/courses/3/files/2">again</a>'},
+    ]
+    course.announcements = [
+        {
+            "id": 9,
+            "title": "Welcome",
+            "message": "",
+            "attachments": [fake._file_json(course.files[4])],
+        }
+    ]
+    course.discussions = [{"id": 8, "title": "Q&A", "message": '<a href="/files/999">gone</a>'}]
+    fake.courses[3] = course
+    plan, result = run(fake, tmp_path)
+    assert kinds(result) == {
+        "Bio/Syllabus/syllabus.pdf": "new",
+        "Bio/Assignments/HW 1/hw.pdf": "new",
+        "Bio/Pages/Week 1/notes.pdf": "new",
+        "Bio/Announcements/Welcome/ann.pdf": "new",
+    }
+
+
+def test_files_tab_wins_over_links(canvas, tmp_path):
+    canvas.courses[10].assignments = [
+        {"id": 1, "name": "HW", "description": '<a href="/courses/10/files/100">x</a>'}
+    ]
+    _, result = run(canvas, tmp_path)
+    assert "Signals & Systems/syllabus.pdf" in kinds(result)
+
+
+def test_completed_courses_are_optional(canvas):
+    canvas.courses[20] = FakeCourse(id=20, name="Chemistry", completed=True)
+    with client_for(canvas) as client:
+        assert [c.id for c in list_courses(client)] == [10]
+        found = list_courses(client, include_completed=True)
+        assert [(c.id, c.completed) for c in found] == [(20, True), (10, False)]
+
+
+def test_file_links():
+    from canvas_pull.collector import file_links
+
+    html = '<a href="/courses/5/files/7/download"></a><img src="/files/8"><a href="/files/7">'
+    assert file_links(html, 1) == [(7, 5), (8, 1)]
+    assert file_links(None, 1) == []

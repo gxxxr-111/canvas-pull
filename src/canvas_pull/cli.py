@@ -122,12 +122,17 @@ def init() -> None:
 @app.command()
 def courses(
     all_: Annotated[bool, typer.Option("--all", help="Include courses whose term ended.")] = False,
+    completed: Annotated[
+        bool | None,
+        typer.Option("--completed/--no-completed", help="Include completed (concluded) courses."),
+    ] = None,
 ) -> None:
     """List the courses that would be synced."""
     cfg = _load()
+    with_completed = cfg.include_completed if completed is None else completed
     try:
         with CanvasClient(cfg.website, cfg.token) as client:
-            found = list_courses(client, include_past=all_)
+            found = list_courses(client, include_past=all_, include_completed=with_completed)
     except CanvasError as exc:
         raise _fail(str(exc)) from None
 
@@ -137,15 +142,18 @@ def courses(
     table.add_column("Term")
     table.add_column("")
     for c in found:
-        skipped = "[dim]excluded[/]" if _matches(c, cfg.exclude) else ""
-        table.add_row(str(c.id), c.label, (c.term.name if c.term else "") or "", skipped)
+        notes = ["[dim]completed[/]"] if c.completed else []
+        if _matches(c, cfg.exclude):
+            notes.append("[dim]excluded[/]")
+        term = (c.term.name if c.term else "") or ""
+        table.add_row(str(c.id), c.label, term, " ".join(notes))
     console.print(table)
 
 
 def _scan(
-    client: CanvasClient, cfg: Config, only: list[str], all_courses: bool
+    client: CanvasClient, cfg: Config, only: list[str], all_courses: bool, completed: bool
 ) -> list[CourseScan]:
-    found = list_courses(client, include_past=all_courses)
+    found = list_courses(client, include_past=all_courses, include_completed=completed)
     found = [c for c in found if not _matches(c, cfg.exclude)]
     if only:
         found = [c for c in found if _matches(c, only)]
@@ -156,7 +164,7 @@ def _scan(
     with console.status("") as status:
         for i, course in enumerate(found, 1):
             status.update(f"Scanning [{i}/{len(found)}] {course.label}")
-            scans.append(scan_course(client, course, names[course.id]))
+            scans.append(scan_course(client, course, names[course.id], cfg.sources))
     return scans
 
 
@@ -194,6 +202,10 @@ def sync(
     all_courses: Annotated[
         bool, typer.Option("--all-courses", help="Include courses whose term ended.")
     ] = False,
+    completed: Annotated[
+        bool | None,
+        typer.Option("--completed/--no-completed", help="Include completed (concluded) courses."),
+    ] = None,
     git: Annotated[
         bool | None, typer.Option("--git/--no-git", help="Commit the result in the save folder.")
     ] = None,
@@ -201,11 +213,12 @@ def sync(
     """Download new and changed files from your active courses."""
     cfg = _load()
     use_git = cfg.git if git is None else git
+    with_completed = cfg.include_completed if completed is None else completed
     manifest = Manifest.load(cfg.save_dir)
 
     try:
         with CanvasClient(cfg.website, cfg.token) as client:
-            scans = _scan(client, cfg, course or [], all_courses)
+            scans = _scan(client, cfg, course or [], all_courses, with_completed)
             if not scans:
                 console.print("No matching active courses.")
                 return
@@ -214,8 +227,11 @@ def sync(
             for s in scans:
                 if s.error:
                     err.print(f"[yellow]![/] Skipped {s.course.label}: {s.error}")
-                elif s.source == "modules":
-                    console.print(f"[dim]{s.course.label}: Files tab hidden, used Modules.[/]")
+                elif s.files_tab_hidden:
+                    console.print(
+                        f"[dim]{s.course.label}: Files tab hidden; "
+                        "found files through modules, assignments and pages.[/]"
+                    )
 
             if dry_run:
                 _print_changes(plan.changes)
@@ -277,9 +293,13 @@ def status(
     course: Annotated[
         list[str] | None, typer.Option("--course", "-c", help="Only these courses.")
     ] = None,
+    completed: Annotated[
+        bool | None,
+        typer.Option("--completed/--no-completed", help="Include completed (concluded) courses."),
+    ] = None,
 ) -> None:
     """Show what changed on Canvas since the last sync (downloads nothing)."""
-    sync(dry_run=True, course=course, all_courses=False, git=False)
+    sync(dry_run=True, course=course, all_courses=False, completed=completed, git=False)
 
 
 @app.command()
@@ -316,6 +336,8 @@ def show_config() -> None:
         ("keep_history", str(cfg.keep_history)),
         ("git", str(cfg.git)),
         ("exclude", ", ".join(cfg.exclude) or "-"),
+        ("include_completed", str(cfg.include_completed)),
+        ("sources", ", ".join(cfg.sources)),
     ]:
         table.add_row(f"[bold]{key}[/]", value)
     console.print(table)
