@@ -27,6 +27,8 @@ class Course(_Model):
     end_at: datetime | None = None
     # Courses outside their access dates come back with only id + this flag.
     access_restricted_by_date: bool = False
+    # Set by canvas-pull (not Canvas) for courses from completed enrollments.
+    completed: bool = False
 
     @property
     def label(self) -> str:

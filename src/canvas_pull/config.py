@@ -19,6 +19,8 @@ from pathlib import Path
 
 from platformdirs import user_config_path
 
+from .collector import SOURCES
+
 APP_NAME = "canvas-pull"
 KEYRING_SERVICE = "canvas-pull"
 DEFAULT_SAVE_DIR = "~/Canvas"
@@ -44,6 +46,8 @@ class Config:
     keep_history: bool = True
     git: bool = False
     exclude: list[str] = field(default_factory=list)
+    include_completed: bool = False
+    sources: list[str] = field(default_factory=lambda: list(SOURCES))
 
 
 def default_config_file() -> Path:
@@ -142,9 +146,20 @@ def load_config(
             keep_history=bool(data.get("keep_history", True)),
             git=bool(data.get("git", False)),
             exclude=[str(x) for x in data.get("exclude", [])],
+            include_completed=bool(data.get("include_completed", False)),
+            sources=_sources(data.get("sources", list(SOURCES))),
         )
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"Invalid value in {config_file}: {exc}") from exc
+
+
+def _sources(value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise ConfigError(f"`sources` must be a list, e.g. {list(SOURCES)}")
+    unknown = [s for s in value if s not in SOURCES]
+    if unknown:
+        raise ConfigError(f"Unknown source(s) {unknown}. Choose from {list(SOURCES)}.")
+    return [str(s) for s in value]
 
 
 def _toml_value(value: object) -> str:
@@ -173,6 +188,8 @@ def save_config(cfg: Config, *, config_file: Path | None = None) -> str:
         "keep_history": cfg.keep_history,
         "git": cfg.git,
         "exclude": cfg.exclude,
+        "include_completed": cfg.include_completed,
+        "sources": cfg.sources,
     }
     stored_in = "keychain"
     try:

@@ -2,7 +2,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-green" />
-  <img src="https://img.shields.io/badge/version-2.0.0-blue" />
+  <img src="https://img.shields.io/badge/version-2.1.0-blue" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" />
 </p>
 
@@ -30,11 +30,17 @@ Operating Systems
 
 - **Incremental sync.** Files are tracked by their Canvas file ID, so unchanged files are never
   downloaded again and renames are detected without re-downloading.
-- **Change report.** `status` previews changes, `sync` applies them, `log` shows past syncs.
+- **Change report.** `status` previews changes, `sync` applies them, `log` shows past syncs,
+  and `log --since 7d` gives a merged weekly summary.
+- **Automatic sync.** `schedule enable` runs a sync every day (or every few hours) and shows a
+  desktop notification when something changes.
 - **Old versions kept.** When a file changes, the previous copy is moved to
   `.canvas-pull/history/<timestamp>/`. Files deleted on Canvas stay on your disk.
-- **Finds hidden files.** If a course hides the Files tab, files linked from Modules are used.
-- **Only current courses.** Courses whose term has ended are skipped (use `--all-courses`).
+- **Finds files everywhere.** Besides the Files tab: Modules, the syllabus, assignment
+  descriptions, pages, announcements and discussions (attachments and linked files). This also
+  covers courses that hide the Files tab.
+- **Current courses, or everything.** Courses whose term has ended are skipped by default;
+  `--completed` also archives concluded courses.
 - **Safe token storage.** `init` stores your token in the system keychain, not in a text file.
 - **Optional git.** `sync --git` commits each sync in the save folder.
 - Parallel downloads, automatic retries with back-off, full pagination.
@@ -63,10 +69,13 @@ uv tool install git+https://github.com/gxxxr-111/canvas-pull
 | Command | What it does |
 | --- | --- |
 | `canvas-pull init` | Set Canvas URL, save folder and token (token goes to the keychain). |
-| `canvas-pull courses [--all]` | List active courses. |
-| `canvas-pull status [-c COURSE]` | Show what changed on Canvas. Downloads nothing. |
-| `canvas-pull sync [-n] [-c COURSE] [--all-courses] [--git]` | Download changes. `-n` is a dry run. `-c` takes a course ID or part of its name and can be repeated. |
+| `canvas-pull courses [--all] [--completed]` | List courses that would be synced. |
+| `canvas-pull status [-c COURSE] [--completed]` | Show what changed on Canvas. Downloads nothing. |
+| `canvas-pull sync [-n] [-c COURSE] [--completed] [--git] [--notify]` | Download changes. `-n` is a dry run. `-c` takes a course ID or part of its name and can be repeated. `--notify` shows a desktop notification. |
 | `canvas-pull log [-n 10]` | Show recent syncs. |
+| `canvas-pull log --since 7d` | Merged summary since `7d`, `24h`, `2w`, `today` or a date. |
+| `canvas-pull schedule enable [--at 08:00 ...] [--every 6h]` | Sync automatically (launchd on macOS, systemd timer on Linux). Default: daily 09:00. |
+| `canvas-pull schedule status \| run \| disable` | Show the schedule and its log, trigger it now, or remove it. |
 | `canvas-pull config` | Show settings in use. |
 
 ## Configuration
@@ -80,7 +89,26 @@ concurrency = 4          # parallel downloads
 keep_history = true      # keep replaced versions in .canvas-pull/history
 git = false              # commit after every sync
 exclude = ["PE", "12345"] # course IDs or name fragments to skip
+include_completed = false # also sync concluded courses
+sources = ["files", "modules", "syllabus", "assignments", "pages", "announcements", "discussions"]
 ```
+
+When a file appears in several places it keeps the path of the first source in that list, so a
+file in the Files tab stays where it is even if an assignment links to it. Files found elsewhere
+go under `Modules/<module>/`, `Assignments/<name>/`, `Pages/<title>/`, `Announcements/<title>/`,
+`Discussions/<title>/` or `Syllabus/`.
+
+### Automatic sync
+
+```bash
+canvas-pull schedule enable --at 08:00 --at 20:00   # or: --every 6h
+canvas-pull schedule run      # try it once now
+canvas-pull schedule status   # schedule + last log lines
+```
+
+The job runs `canvas-pull sync --notify` from the folder where you enabled it. A Mac that was
+asleep at the scheduled time catches up when it wakes. Install with `uv tool install` first so
+the job points at a stable path.
 
 Environment variables override the file: `CANVAS_URL`, `CANVAS_TOKEN`, `CANVAS_SAVE_DIR`. A
 `.env` file in the current folder is also read (v1 keys `WEBSITE`, `ACCESS_TOKEN`, `SAVE_DIR`
@@ -123,10 +151,12 @@ uv tool install git+https://github.com/gxxxr-111/canvas-pull
 canvas-pull init      # 填学校 Canvas 域名（如 oc.sjtu.edu.cn）、保存目录、Access Token
 canvas-pull status    # 只看变化，不下载
 canvas-pull sync      # 下载变化
-canvas-pull log       # 查看历次同步记录
+canvas-pull log --since 7d          # 本周汇总
+canvas-pull schedule enable --at 08:00   # 每天早上自动同步，有变化时弹通知
 ```
 
 - Token 在 Canvas 的「账户 → 设置 → 新建访问许可证」生成，`init` 会把它存进系统钥匙串。
 - 文件被修改时，旧版本会移到 `.canvas-pull/history/`；Canvas 上删除的文件本地不会删除。
-- 课程隐藏了「文件」栏目时，会自动从「单元/模块」里找文件。
+- 除了「文件」栏目，还会从模块、课程大纲、作业说明、页面、公告和讨论里找附件和链接的文件。
+- `--completed` 可以把已结业的课程也一起归档下来。
 - `sync --git` 会在保存目录里自动提交一次 git，方便用 `git log` 回看。

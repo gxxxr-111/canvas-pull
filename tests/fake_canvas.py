@@ -30,6 +30,12 @@ class FakeCourse:
     files_tab_hidden: bool = False
     modules: dict[str, list[int]] = field(default_factory=dict)
     term_end: str | None = None
+    completed: bool = False
+    syllabus: str = ""
+    assignments: list[dict] = field(default_factory=list)  # {"name", "description"}
+    pages: list[dict] = field(default_factory=list)  # {"title", "body"}
+    announcements: list[dict] = field(default_factory=list)  # {"title", "message", "attachments"}
+    discussions: list[dict] = field(default_factory=list)
 
 
 class FakeCanvas:
@@ -90,17 +96,33 @@ class FakeCanvas:
         if parts == ["users", "self"]:
             return httpx.Response(200, json={"id": 1, "name": "Student"})
         if parts == ["courses"]:
+            state = request.url.params.get("enrollment_state", "active")
             items = [
                 {"id": c.id, "name": c.name, "term": {"name": "Fall", "end_at": c.term_end}}
                 for c in self.courses.values()
+                if c.completed == (state == "completed")
             ]
             return self._page(request, items)
+        if parts[0] == "files" and len(parts) == 2:
+            for c in self.courses.values():
+                if int(parts[1]) in c.files:
+                    return httpx.Response(200, json=self._file_json(c.files[int(parts[1])]))
+            return httpx.Response(404, json={"errors": [{"message": "not found"}]})
 
         course = self.courses[int(parts[1])]
         unauthorized = httpx.Response(
             401, json={"status": "unauthorized", "errors": [{"message": "user not authorized"}]}
         )
         rest = parts[2:]
+        if rest == []:
+            return httpx.Response(200, json={"id": course.id, "syllabus_body": course.syllabus})
+        if rest == ["assignments"]:
+            return self._page(request, course.assignments)
+        if rest == ["pages"]:
+            return self._page(request, course.pages)
+        if rest == ["discussion_topics"]:
+            only = request.url.params.get("only_announcements") == "true"
+            return self._page(request, course.announcements if only else course.discussions)
         if rest == ["folders"]:
             if course.files_tab_hidden:
                 return unauthorized
@@ -112,7 +134,10 @@ class FakeCanvas:
                 return unauthorized
             return self._page(request, [self._file_json(f) for f in course.files.values()])
         if len(rest) == 2 and rest[0] == "files":
-            return httpx.Response(200, json=self._file_json(course.files[int(rest[1])]))
+            f = course.files.get(int(rest[1]))
+            if f is None:
+                return httpx.Response(404, json={"errors": [{"message": "not found"}]})
+            return httpx.Response(200, json=self._file_json(f))
         if rest == ["modules"]:
             mods = [{"id": i, "name": n} for i, n in enumerate(course.modules, 1)]
             return self._page(request, mods)

@@ -1,6 +1,6 @@
 [project]
 name = "canvas-pull"
-version = "2.0.0"
+version = "2.1.0"
 description = "Sync files from your active Canvas LMS courses, download only what changed, and see exactly which files were added, modified, moved or deleted."
 authors = [{ name = "Mirage_", email = "gaoxuran111@gmail.com" }]
 readme = "README.md"
