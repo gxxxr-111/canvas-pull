@@ -96,3 +96,44 @@ def test_log_since_summary(env):
     r = runner.invoke(cli.app, ["log", "--since", "7d"])
     assert r.exit_code == 0, r.output
     assert "1 new" in r.output and "modified" not in r.output  # new then edited = new
+
+
+def test_completed_courses_archived_after_first_sync(env):
+    fake, out = env
+    old = FakeCourse(id=2, name="Chemistry", completed=True)
+    old.files[20] = FakeFile(20, "lab.pdf", 1, b"lab")
+    fake.courses[2] = old
+
+    r = runner.invoke(cli.app, ["sync", "--completed"])
+    assert r.exit_code == 0, r.output
+    assert (out / "Chemistry/lab.pdf").exists()
+
+    fake.requests.clear()
+    r = runner.invoke(cli.app, ["sync", "--completed"])
+    assert "already archived" in r.output
+    assert not any(p.startswith("/api/v1/courses/2/") for p in fake.requests)
+
+    fake.requests.clear()
+    runner.invoke(cli.app, ["sync", "--completed", "--refresh"])
+    assert any(p.startswith("/api/v1/courses/2/") for p in fake.requests)
+
+
+def test_adding_a_source_rescans_archived_course(env, monkeypatch, tmp_path):
+    fake, _ = env
+    old = FakeCourse(id=2, name="Chemistry", completed=True)
+    old.files[20] = FakeFile(20, "lab.pdf", 1, b"lab")
+    fake.courses[2] = old
+    runner.invoke(cli.app, ["sync", "--completed"])
+
+    cfg_file = tmp_path / "with-sources.toml"
+    cfg_file.write_text('sources = ["files", "announcements"]\n')
+    monkeypatch.setattr(cli, "load_config", _loader(cfg_file))
+    fake.requests.clear()
+    runner.invoke(cli.app, ["sync", "--completed"])
+    assert any(p.startswith("/api/v1/courses/2/") for p in fake.requests)
+
+
+def _loader(cfg_file):
+    from canvas_pull.config import load_config
+
+    return lambda **kw: load_config(config_file=cfg_file, use_keyring=False, **kw)

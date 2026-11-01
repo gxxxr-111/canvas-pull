@@ -2,7 +2,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-green" />
-  <img src="https://img.shields.io/badge/version-2.2.0-blue" />
+  <img src="https://img.shields.io/badge/version-2.3.0-blue" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" />
 </p>
 
@@ -40,10 +40,12 @@ Operating Systems
   Modules as a fallback when a course hides it). Opt in to the syllabus, assignment
   descriptions, pages, announcements and discussions through the `sources` setting.
 - **Current courses, or everything.** Courses whose term has ended are skipped by default;
-  `--completed` also archives concluded courses.
+  `--completed` also archives concluded courses. A completed course is scanned once; later syncs
+  skip it (use `--refresh` to scan it again).
 - **Safe token storage.** `init` stores your token in the system keychain, not in a text file.
 - **Optional git.** `sync --git` commits each sync in the save folder.
-- Parallel downloads, automatic retries with back-off, full pagination.
+- **Fast.** Courses are scanned in parallel (a 32-course account scans in about 10 s instead of
+  75 s), with parallel downloads, automatic retries with back-off and full pagination.
 
 ## Install
 
@@ -71,7 +73,7 @@ uv tool install git+https://github.com/gxxxr-111/canvas-pull
 | `canvas-pull init` | Set Canvas URL, save folder and token (token goes to the keychain). |
 | `canvas-pull courses [--all] [--completed]` | List courses that would be synced. |
 | `canvas-pull status [-c COURSE] [--completed]` | Show what changed on Canvas. Downloads nothing. |
-| `canvas-pull sync [-n] [-c COURSE] [--completed] [--git] [--notify]` | Download changes. `-n` is a dry run. `-c` takes a course ID or part of its name and can be repeated. `--notify` shows a desktop notification. |
+| `canvas-pull sync [-n] [-c COURSE] [--completed] [--refresh] [--git] [--notify]` | Download changes. `-n` is a dry run. `-c` takes a course ID or part of its name and can be repeated. `--refresh` rescans archived completed courses. `--notify` shows a desktop notification. |
 | `canvas-pull log [-n 10]` | Show recent syncs. |
 | `canvas-pull log --since 7d` | Merged summary since `7d`, `24h`, `2w`, `today` or a date. |
 | `canvas-pull schedule enable [--at 08:00 ...] [--every 6h]` | Sync automatically (launchd on macOS, systemd timer on Linux). Default: daily 09:00. |
@@ -86,6 +88,7 @@ uv tool install git+https://github.com/gxxxr-111/canvas-pull
 website = "https://oc.sjtu.edu.cn"
 save_dir = "/Users/me/Canvas"
 concurrency = 4          # parallel downloads
+scan_concurrency = 8     # parallel API requests while scanning (max 16)
 keep_history = true      # keep replaced versions in .canvas-pull/history
 git = false              # commit after every sync
 exclude = ["PE", "12345"] # course IDs or name fragments to skip
@@ -167,5 +170,6 @@ canvas-pull schedule enable --at 08:00   # 每天早上自动同步，有变化�
 - 文件被修改时，旧版本会移到 `.canvas-pull/history/`；Canvas 上删除的文件本地不会删除。
 - 默认只同步「文件」栏目；课程隐藏了文件栏目时，会自动改从「模块」里找。
 - 想要更多来源（课程大纲、作业、页面、公告、讨论里的附件和链接），在配置文件里设置 `sources`。
-- `--completed` 可以把已结业的课程也一起归档下来。
+- `--completed` 可以把已结业的课程也一起归档下来。已结业的课只完整扫描一次，之后自动跳过（`--refresh` 强制重扫）。
+- 多门课并行扫描，32 门课大约 10 秒扫完。
 - `sync --git` 会在保存目录里自动提交一次 git，方便用 `git log` 回看。

@@ -267,3 +267,63 @@ def test_modules_fallback_only_when_files_tab_unusable(canvas, tmp_path):
     canvas.courses[10].modules = {"Extra": [100]}
     _, result = run(canvas, tmp_path)
     assert not any("Modules" in p for p in kinds(result))  # Files tab works: no fallback
+
+
+def test_modules_items_come_inline(tmp_path):
+    fake = FakeCanvas()
+    course = FakeCourse(id=5, name="Hidden", files_tab_hidden=True)
+    course.files[7] = FakeFile(7, "notes.pdf", 1, b"n")
+    course.modules = {"Week 1": [7]}
+    fake.courses[5] = course
+    _, result = run(fake, tmp_path)
+    assert kinds(result) == {"Hidden/Modules/Week 1/notes.pdf": "new"}
+    assert not any(r.endswith("/items") for r in fake.requests)
+
+
+def test_modules_items_fallback_when_not_inline(tmp_path):
+    fake = FakeCanvas()
+    course = FakeCourse(id=5, name="Hidden", files_tab_hidden=True, module_items_inline=False)
+    course.files[7] = FakeFile(7, "notes.pdf", 1, b"n")
+    course.modules = {"Week 1": [7]}
+    fake.courses[5] = course
+    _, result = run(fake, tmp_path)
+    assert kinds(result) == {"Hidden/Modules/Week 1/notes.pdf": "new"}
+
+
+def test_scan_courses_parallel_keeps_order(tmp_path):
+    from canvas_pull.collector import scan_courses
+
+    fake = FakeCanvas()
+    for i in range(1, 13):
+        c = FakeCourse(id=i, name=f"Course {i:02d}")
+        c.files[i * 100] = FakeFile(i * 100, "a.pdf", 1, b"x")
+        fake.courses[i] = c
+    with client_for(fake) as client:
+        courses = list_courses(client)
+        scans = scan_courses(client, courses, course_dirnames(courses), workers=6)
+    assert [s.course.id for s in scans] == [c.id for c in courses]
+    assert all(len(s.files) == 1 and not s.error for s in scans)
+
+
+def test_client_caps_concurrent_requests():
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    import httpx
+
+    lock, live, peak = threading.Lock(), [0], [0]
+
+    def handler(request):
+        with lock:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        time.sleep(0.02)
+        with lock:
+            live[0] -= 1
+        return httpx.Response(200, json={})
+
+    client = CanvasClient(BASE, "t", transport=httpx.MockTransport(handler), max_concurrency=3)
+    with ThreadPoolExecutor(12) as pool:
+        list(pool.map(lambda _: client.get("users/self"), range(24)))
+    assert peak[0] <= 3

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -130,19 +131,29 @@ def file_links(html: str | None, course_id: int) -> list[tuple[int, int]]:
 
 
 def _files_tab(client: CanvasClient, course: Course) -> Iterator[Found]:
-    folders = {
-        f.id: [sanitize(p) for p in PurePosixPath(f.full_name).parts[1:]]
-        for f in (Folder.model_validate(r) for r in client.paginate(f"courses/{course.id}/folders"))
-    }
-    for raw in client.paginate(f"courses/{course.id}/files"):
+    # The folder list and the file list are independent: fetch them at the same time.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        folders_future = pool.submit(lambda: list(client.paginate(f"courses/{course.id}/folders")))
+        files_raw = list(client.paginate(f"courses/{course.id}/files"))
+        folders = {
+            f.id: [sanitize(p) for p in PurePosixPath(f.full_name).parts[1:]]
+            for f in (Folder.model_validate(r) for r in folders_future.result())
+        }
+    for raw in files_raw:
         f = CanvasFile.model_validate(raw)
         yield f, folders.get(f.folder_id or -1, [])
 
 
 def _modules(client: CanvasClient, course: Course) -> Iterator[Link]:
-    for module in client.paginate(f"courses/{course.id}/modules"):
+    # Ask for items inline; Canvas leaves them out for very large modules, and only those
+    # need a request of their own.
+    params = {"include[]": ["items"]}
+    for module in client.paginate(f"courses/{course.id}/modules", params):
         folder = ["Modules", sanitize(module.get("name") or f"Module {module.get('id')}")]
-        for item in client.paginate(f"courses/{course.id}/modules/{module['id']}/items"):
+        items = module.get("items")
+        if items is None:
+            items = client.paginate(f"courses/{course.id}/modules/{module['id']}/items")
+        for item in items:
             if item.get("type") == "File" and item.get("content_id"):
                 yield int(item["content_id"]), course.id, folder
 
@@ -208,6 +219,27 @@ def _resolve(client: CanvasClient, fid: int, cid: int) -> CanvasFile | None:
     return None
 
 
+def scan_courses(
+    client: CanvasClient,
+    courses: Sequence[Course],
+    dirnames: dict[int, str],
+    sources: Sequence[str] = DEFAULT_SOURCES,
+    *,
+    workers: int = 6,
+    on_done: Callable[[CourseScan], None] | None = None,
+) -> list[CourseScan]:
+    """Scan several courses at once. Results come back in the order of `courses`."""
+    results: dict[int, CourseScan] = {}
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {pool.submit(scan_course, client, c, dirnames[c.id], sources): c for c in courses}
+        for future in as_completed(futures):
+            scan = future.result()  # scan_course turns Canvas errors into scan.error
+            results[scan.course.id] = scan
+            if on_done:
+                on_done(scan)
+    return [results[c.id] for c in courses]
+
+
 def _assign_paths(
     found: list[tuple[CanvasFile, list[str], str]], course: Course, root: str
 ) -> list[RemoteFile]:
@@ -259,10 +291,12 @@ def scan_course(
             except ForbiddenError:
                 if source == "files":
                     scan.files_tab_hidden = True
-        for fid, (cid, parts, source) in links.items():
-            f = _resolve(client, fid, cid)
-            if f is not None:
-                files[fid] = (f, parts, source)
+        if links:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                resolved = pool.map(lambda kv: _resolve(client, kv[0], kv[1][0]), links.items())
+                for (fid, (_cid, parts, source)), f in zip(links.items(), resolved, strict=True):
+                    if f is not None:
+                        files[fid] = (f, parts, source)
         scan.files = _assign_paths(list(files.values()), course, dirname)
     except CanvasError as exc:
         scan.error = str(exc)

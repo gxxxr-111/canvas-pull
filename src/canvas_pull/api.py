@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import random
+import threading
 import time
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -40,10 +42,15 @@ class CanvasClient:
         timeout: float = 30.0,
         max_retries: int = 4,
         backoff: float = 1.0,
+        max_concurrency: int = 8,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
         self.backoff = backoff
+        # Callers may use many threads; this caps how many API calls are in flight at
+        # once, which keeps us well inside Canvas's rate limit. Downloads are not capped
+        # here (the download pool size limits them).
+        self._slots = threading.BoundedSemaphore(max(1, max_concurrency))
         # httpx drops the Authorization header when a redirect leaves this host,
         # so file downloads redirected to S3 / inst-fs do not leak the token.
         self._http = httpx.Client(
@@ -55,6 +62,7 @@ class CanvasClient:
             timeout=httpx.Timeout(timeout, connect=10.0),
             follow_redirects=True,
             transport=transport,
+            limits=httpx.Limits(max_connections=64, max_keepalive_connections=32),
         )
 
     def __enter__(self) -> CanvasClient:
@@ -102,7 +110,8 @@ class CanvasClient:
         while True:
             try:
                 request = self._http.build_request("GET", url, params=params)
-                resp = self._http.send(request, stream=stream)
+                with nullcontext() if stream else self._slots:
+                    resp = self._http.send(request, stream=stream)
             except httpx.TransportError as exc:
                 if attempt >= self.max_retries:
                     raise CanvasError(f"Network error: {exc}") from exc

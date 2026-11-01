@@ -15,7 +15,7 @@ from rich.table import Table
 from . import __version__, notify
 from . import schedule as sched
 from .api import AuthError, CanvasClient, CanvasError
-from .collector import CourseScan, course_dirnames, list_courses, scan_course
+from .collector import CourseScan, course_dirnames, list_courses, scan_courses
 from .config import (
     DEFAULT_SAVE_DIR,
     Config,
@@ -134,7 +134,7 @@ def courses(
     cfg = _load()
     with_completed = cfg.include_completed if completed is None else completed
     try:
-        with CanvasClient(cfg.website, cfg.token) as client:
+        with _client(cfg) as client:
             found = list_courses(client, include_past=all_, include_completed=with_completed)
     except CanvasError as exc:
         raise _fail(str(exc)) from None
@@ -153,22 +153,43 @@ def courses(
     console.print(table)
 
 
+def _client(cfg: Config) -> CanvasClient:
+    return CanvasClient(cfg.website, cfg.token, max_concurrency=cfg.scan_concurrency)
+
+
 def _scan(
-    client: CanvasClient, cfg: Config, only: list[str], all_courses: bool, completed: bool
-) -> list[CourseScan]:
+    client: CanvasClient,
+    cfg: Config,
+    manifest: Manifest,
+    only: list[str],
+    all_courses: bool,
+    completed: bool,
+    refresh: bool,
+) -> tuple[list[CourseScan], int]:
+    """Scan matching courses in parallel. Returns (scans, number of archived courses skipped)."""
     found = list_courses(client, include_past=all_courses, include_completed=completed)
     found = [c for c in found if not _matches(c, cfg.exclude)]
     if only:
         found = [c for c in found if _matches(c, only)]
-    if not found:
-        return []
+    # Folder names come from the full list so skipping courses never renames a folder.
     names = course_dirnames(found)
-    scans: list[CourseScan] = []
-    with console.status("") as status:
-        for i, course in enumerate(found, 1):
-            status.update(f"Scanning [{i}/{len(found)}] {course.label}")
-            scans.append(scan_course(client, course, names[course.id], cfg.sources))
-    return scans
+    todo = [
+        c for c in found if refresh or not (c.completed and manifest.is_archived(c.id, cfg.sources))
+    ]
+    if not todo:
+        return [], len(found)
+    done = 0
+    with console.status(f"Scanning {len(todo)} course(s)…") as status:
+
+        def progress(scan: CourseScan) -> None:
+            nonlocal done
+            done += 1
+            status.update(f"Scanning [{done}/{len(todo)}] {scan.course.label}")
+
+        scans = scan_courses(
+            client, todo, names, cfg.sources, workers=cfg.scan_concurrency, on_done=progress
+        )
+    return scans, len(found) - len(todo)
 
 
 def _print_changes(changes: list[Change]) -> None:
@@ -221,6 +242,9 @@ def sync(
         bool,
         typer.Option("--notify", help="Desktop notification when files change or sync fails."),
     ] = False,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Scan archived completed courses again.")
+    ] = False,
 ) -> None:
     """Download new and changed files from your active courses."""
     if not console.is_terminal and not dry_run:
@@ -236,10 +260,18 @@ def sync(
 
     try:
         lock = nullcontext() if dry_run else sync_lock(cfg.save_dir)
-        with lock, CanvasClient(cfg.website, cfg.token) as client:
-            scans = _scan(client, cfg, course or [], all_courses, with_completed)
+        with lock, _client(cfg) as client:
+            scans, archived = _scan(
+                client, cfg, manifest, course or [], all_courses, with_completed, refresh
+            )
+            if archived:
+                console.print(
+                    f"[dim]Skipped {archived} completed course(s) already archived "
+                    "(use --refresh to scan them again).[/]"
+                )
             if not scans:
-                console.print("No matching active courses.")
+                if not archived:
+                    console.print("No matching active courses.")
                 return
             plan = make_plan(scans, manifest, cfg.save_dir)
 
@@ -277,6 +309,10 @@ def sync(
                         concurrency=cfg.concurrency,
                         on_progress=lambda _c: progress.advance(task),
                     )
+                    failed_courses = {c.remote.course.id for c, _ in result.failed if c.remote}
+                    for s in scans:
+                        if s.course.completed and not s.error and s.course.id not in failed_courses:
+                            manifest.mark_archived(s.course.id, cfg.sources)
                 finally:
                     manifest.save()
     except SyncLocked:
@@ -324,9 +360,20 @@ def status(
         bool | None,
         typer.Option("--completed/--no-completed", help="Include completed (concluded) courses."),
     ] = None,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Scan archived completed courses again.")
+    ] = False,
 ) -> None:
     """Show what changed on Canvas since the last sync (downloads nothing)."""
-    sync(dry_run=True, course=course, all_courses=False, completed=completed, git=False)
+    sync(
+        dry_run=True,
+        course=course,
+        all_courses=False,
+        completed=completed,
+        git=False,
+        notify_=False,
+        refresh=refresh,
+    )
 
 
 @app.command()
@@ -394,6 +441,7 @@ def show_config() -> None:
         ("save_dir", str(cfg.save_dir)),
         ("token", token),
         ("concurrency", str(cfg.concurrency)),
+        ("scan_concurrency", str(cfg.scan_concurrency)),
         ("keep_history", str(cfg.keep_history)),
         ("git", str(cfg.git)),
         ("exclude", ", ".join(cfg.exclude) or "-"),
