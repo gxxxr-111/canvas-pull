@@ -73,3 +73,15 @@ def test_bad_token_message(env, monkeypatch):
     monkeypatch.setenv("CANVAS_TOKEN", "expired")
     r = runner.invoke(cli.app, ["sync"])
     assert r.exit_code == 1 and "token" in r.output.lower()
+
+
+def test_notify_on_changes_and_on_bad_token(env, monkeypatch):
+    sent = []
+    monkeypatch.setattr(cli.notify, "send", lambda msg, title="": sent.append(msg) or True)
+    runner.invoke(cli.app, ["sync", "--notify"])
+    assert sent == ["Algorithms: 1 new"]
+    runner.invoke(cli.app, ["sync", "--notify"])
+    assert len(sent) == 1  # nothing changed, no notification
+    monkeypatch.setenv("CANVAS_TOKEN", "expired")
+    runner.invoke(cli.app, ["sync", "--notify"])
+    assert "token" in sent[-1]

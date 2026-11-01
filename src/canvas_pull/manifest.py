@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -80,3 +82,24 @@ def read_log(save_dir: Path, limit: int = 10) -> list[dict]:
         return []
     lines = path.read_text(encoding="utf-8").splitlines()
     return [json.loads(line) for line in lines[-limit:] if line.strip()]
+
+
+class SyncLocked(Exception):
+    """Another canvas-pull sync is already running on this save folder."""
+
+
+@contextmanager
+def sync_lock(save_dir: Path) -> Iterator[None]:
+    path = save_dir / STATE_DIR / "lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import fcntl
+    except ImportError:  # Windows: no lock
+        yield
+        return
+    with open(path, "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SyncLocked from None
+        yield

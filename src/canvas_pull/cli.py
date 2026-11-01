@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Annotated
 
@@ -11,7 +12,8 @@ from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from . import __version__
+from . import __version__, notify
+from . import schedule as sched
 from .api import AuthError, CanvasClient, CanvasError
 from .collector import CourseScan, course_dirnames, list_courses, scan_course
 from .config import (
@@ -24,7 +26,7 @@ from .config import (
     save_config,
 )
 from .gitops import GitError, commit_sync
-from .manifest import Manifest, append_log, now_iso, read_log
+from .manifest import Manifest, SyncLocked, append_log, now_iso, read_log, sync_lock
 from .models import Course
 from .sync import Change, Kind, execute, make_plan
 
@@ -190,6 +192,11 @@ def _summary(changes: list[Change]) -> str:
     return ", ".join(parts) if parts else "no changes"
 
 
+def _alert(enabled: bool, message: str) -> None:
+    if enabled:
+        notify.send(message)
+
+
 @app.command()
 def sync(
     dry_run: Annotated[
@@ -209,15 +216,26 @@ def sync(
     git: Annotated[
         bool | None, typer.Option("--git/--no-git", help="Commit the result in the save folder.")
     ] = None,
+    notify_: Annotated[
+        bool,
+        typer.Option("--notify", help="Desktop notification when files change or sync fails."),
+    ] = False,
 ) -> None:
     """Download new and changed files from your active courses."""
-    cfg = _load()
+    if not console.is_terminal and not dry_run:
+        console.print(f"--- {now_iso()} canvas-pull sync")  # separator in scheduled-run logs
+    try:
+        cfg = load_config()
+    except ConfigError as exc:
+        _alert(notify_, f"Sync failed: {exc}")
+        raise _fail(str(exc)) from None
     use_git = cfg.git if git is None else git
     with_completed = cfg.include_completed if completed is None else completed
     manifest = Manifest.load(cfg.save_dir)
 
     try:
-        with CanvasClient(cfg.website, cfg.token) as client:
+        lock = nullcontext() if dry_run else sync_lock(cfg.save_dir)
+        with lock, CanvasClient(cfg.website, cfg.token) as client:
             scans = _scan(client, cfg, course or [], all_courses, with_completed)
             if not scans:
                 console.print("No matching active courses.")
@@ -261,9 +279,14 @@ def sync(
                     )
                 finally:
                     manifest.save()
+    except SyncLocked:
+        raise _fail("Another sync is already running for this folder.") from None
     except AuthError as exc:
+        _alert(notify_, "Sync failed: Canvas rejected your token. Run `canvas-pull init`.")
         raise _fail(str(exc)) from None
     except CanvasError as exc:
+        if exc.status is not None:  # stay quiet when simply offline
+            _alert(notify_, f"Sync failed: {exc}")
         raise _fail(str(exc)) from None
 
     _print_changes(result.applied)
@@ -274,9 +297,8 @@ def sync(
         console.print(f"[dim]{len(plan.locked)} locked file(s) not yet available.[/]")
 
     if result.applied:
-        append_log(
-            cfg.save_dir, {"time": now_iso(), "changes": [c.to_dict() for c in result.applied]}
-        )
+        record = {"time": now_iso(), "changes": [c.to_dict() for c in result.applied]}
+        append_log(cfg.save_dir, record)
     if use_git:
         try:
             summary = commit_sync(cfg.save_dir, result.applied)
@@ -284,6 +306,11 @@ def sync(
                 console.print(f"[dim]git: {summary}[/]")
         except GitError as exc:
             err.print(f"[yellow]git commit skipped:[/] {exc}")
+    if result.applied or result.failed:
+        message = notify.describe(result.applied)
+        if result.failed:
+            message = f"{message} · {len(result.failed)} failed".lstrip(" ·")
+        _alert(notify_, message)
     if result.failed:
         raise typer.Exit(1)
 
@@ -341,3 +368,70 @@ def show_config() -> None:
     ]:
         table.add_row(f"[bold]{key}[/]", value)
     console.print(table)
+
+
+schedule_app = typer.Typer(
+    help="Sync automatically on a schedule, with desktop notifications.",
+    no_args_is_help=True,
+)
+app.add_typer(schedule_app, name="schedule")
+
+
+@schedule_app.command("enable")
+def schedule_enable(
+    at: Annotated[
+        list[str] | None,
+        typer.Option("--at", help="Time of day, HH:MM. Repeat for several times. Default 09:00."),
+    ] = None,
+    every: Annotated[
+        str | None, typer.Option("--every", help="Interval instead, e.g. 6h or 30m.")
+    ] = None,
+) -> None:
+    """Install (or replace) the automatic sync."""
+    _load()  # fail now, not silently at 9am
+    try:
+        spec = sched.parse_spec(at or [], every)
+        path = sched.enable(spec, workdir=Path.cwd())
+    except sched.ScheduleError as exc:
+        raise _fail(str(exc)) from None
+    cmd = sched.command()
+    console.print(f"[green]✓[/] canvas-pull will sync [bold]{spec.describe()}[/].")
+    console.print(f"[dim]Job: {path}\nCommand: {' '.join(cmd)}\nLog: {sched.log_file()}[/]")
+    if "/.venv/" in cmd[0]:
+        err.print(
+            "[yellow]Note:[/] this points at a project virtualenv. For a stable path, install "
+            "with `uv tool install canvas-pull` and run `canvas-pull schedule enable` again."
+        )
+
+
+@schedule_app.command("disable")
+def schedule_disable() -> None:
+    """Remove the automatic sync."""
+    if sched.disable():
+        console.print("[green]✓[/] Automatic sync removed.")
+    else:
+        console.print("No automatic sync was installed.")
+
+
+@schedule_app.command("status")
+def schedule_status(
+    lines: Annotated[int, typer.Option("--lines", "-n", help="Log lines to show.")] = 15,
+) -> None:
+    """Show the schedule and the end of its log."""
+    desc = sched.current()
+    console.print(f"Schedule: [bold]{desc}[/]" if desc else "No automatic sync installed.")
+    log_path = sched.log_file()
+    if log_path.is_file():
+        tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+        console.print(f"[dim]{log_path}[/]")
+        console.print("\n".join(tail), markup=False, highlight=False)
+
+
+@schedule_app.command("run")
+def schedule_run() -> None:
+    """Trigger the scheduled sync once now (output goes to the log)."""
+    try:
+        sched.run_now()
+    except sched.ScheduleError as exc:
+        raise _fail(str(exc)) from None
+    console.print(f"Started. Check with [bold]canvas-pull schedule status[/] ({sched.log_file()}).")
