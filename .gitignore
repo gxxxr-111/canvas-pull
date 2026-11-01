@@ -178,3 +178,4 @@ config/
 config.yml
 .canvas-pull/
 .DS_Store
+.idea/
