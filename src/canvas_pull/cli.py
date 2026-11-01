@@ -28,6 +28,7 @@ from .config import (
 from .gitops import GitError, commit_sync
 from .manifest import Manifest, SyncLocked, append_log, now_iso, read_log, sync_lock
 from .models import Course
+from .summary import parse_since, summarize
 from .sync import Change, Kind, execute, make_plan
 
 app = typer.Typer(
@@ -332,9 +333,43 @@ def status(
 @app.command()
 def log(
     limit: Annotated[int, typer.Option("--limit", "-n", help="How many syncs to show.")] = 10,
+    since: Annotated[
+        str | None,
+        typer.Option(
+            "--since", "-s", help="Net summary since 7d, 24h, 2w, today or a date (2026-10-01)."
+        ),
+    ] = None,
 ) -> None:
-    """Show recent syncs and what each one changed."""
+    """Show recent syncs, or a merged summary with --since (e.g. --since 7d)."""
     cfg = _load(require_token=False)
+    if since:
+        try:
+            start = parse_since(since)
+        except ValueError as exc:
+            raise _fail(str(exc)) from None
+        net = summarize(read_log(cfg.save_dir, None), start)
+        local = start.astimezone().strftime("%Y-%m-%d %H:%M")
+        if not net:
+            console.print(f"No changes since {local}.")
+            return
+        console.print(f"[bold]Changes since {local}[/]")
+        by_course: dict[str, list] = defaultdict(list)
+        for n in net:
+            by_course[n.course].append(n)
+        for course_name, items in by_course.items():
+            counts: dict[str, int] = defaultdict(int)
+            for n in items:
+                counts[n.kind] += 1
+            tally = ", ".join(f"{v} {k}" for k, v in counts.items())
+            console.print(f"\n[bold]{course_name}[/]  [dim]{tally}[/]")
+            for n in items:
+                mark, color = STYLE[Kind(n.kind)]
+                shown = n.path.split("/", 1)[-1]
+                if n.old_path:
+                    shown = f"{n.old_path.split('/', 1)[-1]} → {shown}"
+                console.print(f"  [{color}]{mark} {n.kind:<8}[/] {shown}")
+        return
+
     records = read_log(cfg.save_dir, limit)
     if not records:
         console.print("No syncs recorded yet.")

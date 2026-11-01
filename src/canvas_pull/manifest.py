@@ -76,12 +76,13 @@ def append_log(save_dir: Path, record: dict) -> None:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def read_log(save_dir: Path, limit: int = 10) -> list[dict]:
+def read_log(save_dir: Path, limit: int | None = 10) -> list[dict]:
+    """Sync records, oldest first; the last `limit` of them (all if None)."""
     path = save_dir / STATE_DIR / "log.jsonl"
     if not path.is_file():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [json.loads(line) for line in lines[-limit:] if line.strip()]
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [json.loads(line) for line in (lines if limit is None else lines[-limit:])]
 
 
 class SyncLocked(Exception):

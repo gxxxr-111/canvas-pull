@@ -85,3 +85,14 @@ def test_notify_on_changes_and_on_bad_token(env, monkeypatch):
     monkeypatch.setenv("CANVAS_TOKEN", "expired")
     runner.invoke(cli.app, ["sync", "--notify"])
     assert "token" in sent[-1]
+
+
+def test_log_since_summary(env):
+    fake, _ = env
+    runner.invoke(cli.app, ["sync"])
+    fake.courses[1].files[1].content = b"one, edited"
+    fake.courses[1].files[1].modified_at = "2026-10-01T00:00:00Z"
+    runner.invoke(cli.app, ["sync"])
+    r = runner.invoke(cli.app, ["log", "--since", "7d"])
+    assert r.exit_code == 0, r.output
+    assert "1 new" in r.output and "modified" not in r.output  # new then edited = new
