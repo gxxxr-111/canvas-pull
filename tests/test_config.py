@@ -13,12 +13,13 @@ def test_normalize_website():
 
 def test_precedence_file_then_dotenv_then_env(tmp_path: Path):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text('website = "a.edu"\nsave_dir = "/data"\ntoken = "file"\n')
+    data_dir = (tmp_path / "data").as_posix()
+    cfg_file.write_text(f'website = "a.edu"\nsave_dir = "{data_dir}"\ntoken = "file"\n')
     (tmp_path / ".env").write_text("WEBSITE=b.edu\nACCESS_TOKEN='dotenv'\n")
     cfg = load_config(
         config_file=cfg_file, cwd=tmp_path, environ={"CANVAS_TOKEN": "env"}, use_keyring=False
     )
-    assert (cfg.website, cfg.token, cfg.save_dir) == ("https://b.edu", "env", Path("/data"))
+    assert (cfg.website, cfg.token, cfg.save_dir) == ("https://b.edu", "env", Path(data_dir))
 
 
 def test_relative_save_dir_resolves_against_cwd(tmp_path: Path):

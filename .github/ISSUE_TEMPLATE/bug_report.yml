@@ -1,0 +1,40 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Never paste your access token**, cookies or private course content.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Command output
+      description: Paste the output (remove anything private). It is formatted as code automatically.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: canvas-pull version
+      description: Output of `canvas-pull --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Windows, Linux, Other]
+    validations:
+      required: true
+  - type: input
+    id: school
+    attributes:
+      label: Canvas site
+      description: e.g. oc.sjtu.edu.cn (optional, but helps a lot)

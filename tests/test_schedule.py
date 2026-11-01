@@ -1,5 +1,6 @@
 import plistlib
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,10 @@ def test_build_systemd():
     assert "Persistent=true" in timer
 
 
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="launchd needs os.getuid")
+
+
+@posix_only
 def test_enable_disable_macos(tmp_path, monkeypatch):
     monkeypatch.setattr(sched.sys, "platform", "darwin")
     monkeypatch.setattr(sched.Path, "home", lambda: tmp_path)
@@ -55,6 +60,7 @@ def test_enable_disable_macos(tmp_path, monkeypatch):
     assert sched.current() is None and not sched.disable(run=fake_run)
 
 
+@posix_only
 def test_enable_reports_launchctl_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(sched.sys, "platform", "darwin")
     monkeypatch.setattr(sched.Path, "home", lambda: tmp_path)

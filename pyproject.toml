@@ -1,16 +1,28 @@
 [project]
 name = "canvas-pull"
-version = "2.3.0"
-description = "Sync files from your active Canvas LMS courses, download only what changed, and see exactly which files were added, modified, moved or deleted."
+version = "2.4.0"
+description = "Sync your Canvas LMS course files: download only what changed and see what instructors added, modified, moved or deleted."
 authors = [{ name = "Mirage_", email = "gaoxuran111@gmail.com" }]
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
-keywords = ["canvas", "lms", "instructure", "sync", "download", "cli"]
+keywords = ["canvas", "canvas-lms", "instructure", "lms", "sync", "download", "cli", "students"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Education",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+    "Topic :: Utilities",
 ]
 dependencies = [
     "httpx>=0.27",
@@ -25,7 +37,10 @@ dependencies = [
 canvas-pull = "canvas_pull.cli:app"
 
 [project.urls]
+Homepage = "https://github.com/gxxxr-111/canvas-pull"
 Repository = "https://github.com/gxxxr-111/canvas-pull"
+Issues = "https://github.com/gxxxr-111/canvas-pull/issues"
+Changelog = "https://github.com/gxxxr-111/canvas-pull/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
@@ -36,6 +51,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/canvas_pull"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [tool.ruff]
 line-length = 100

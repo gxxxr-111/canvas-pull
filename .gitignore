@@ -174,8 +174,8 @@ cython_debug/
 .pypirc
 
 # canvas-pull local settings (may contain tokens)
-config/
-config.yml
+/config/
+/config.yml
 .canvas-pull/
 .DS_Store
 .idea/
