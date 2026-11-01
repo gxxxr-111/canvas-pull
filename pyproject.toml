@@ -1,0 +1,48 @@
+[project]
+name = "canvas-pull"
+version = "2.0.0"
+description = "Sync files from your active Canvas LMS courses, download only what changed, and see exactly which files were added, modified, moved or deleted."
+authors = [{ name = "Mirage_", email = "gaoxuran111@gmail.com" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+keywords = ["canvas", "lms", "instructure", "sync", "download", "cli"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "httpx>=0.27",
+    "typer>=0.12",
+    "rich>=13.7",
+    "pydantic>=2.7",
+    "platformdirs>=4.2",
+    "keyring>=25",
+]
+
+[project.scripts]
+canvas-pull = "canvas_pull.cli:app"
+
+[project.urls]
+Repository = "https://github.com/gxxxr-111/canvas-pull"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/canvas_pull"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

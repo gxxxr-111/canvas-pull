@@ -1,3 +1,0 @@
-WEBSITE: oc.sjtu.edu.cn # Domain of your institute (Should be based on Canvas LMS).
-ACCESS_TOKEN: xxxxxx    # Your API access token. You can get it from your Canvas LMS.
-SAVE_DIR: .             # Directory to save the data. Default is the current directory.
