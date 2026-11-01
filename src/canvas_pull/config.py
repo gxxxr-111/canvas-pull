@@ -43,6 +43,7 @@ class Config:
     save_dir: Path
     token: str = ""
     concurrency: int = 4
+    scan_concurrency: int = 8
     keep_history: bool = True
     git: bool = False
     exclude: list[str] = field(default_factory=list)
@@ -143,6 +144,7 @@ def load_config(
             save_dir=save_dir,
             token=token,
             concurrency=max(1, int(data.get("concurrency", 4))),
+            scan_concurrency=max(1, min(16, int(data.get("scan_concurrency", 8)))),
             keep_history=bool(data.get("keep_history", True)),
             git=bool(data.get("git", False)),
             exclude=[str(x) for x in data.get("exclude", [])],
@@ -185,6 +187,7 @@ def save_config(cfg: Config, *, config_file: Path | None = None) -> str:
         "website": cfg.website,
         "save_dir": str(cfg.save_dir),
         "concurrency": cfg.concurrency,
+        "scan_concurrency": cfg.scan_concurrency,
         "keep_history": cfg.keep_history,
         "git": cfg.git,
         "exclude": cfg.exclude,

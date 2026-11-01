@@ -31,6 +31,7 @@ class FakeCourse:
     modules: dict[str, list[int]] = field(default_factory=dict)
     term_end: str | None = None
     completed: bool = False
+    module_items_inline: bool = True  # Canvas omits inline items for very large modules
     syllabus: str = ""
     assignments: list[dict] = field(default_factory=list)  # {"name", "description"}
     pages: list[dict] = field(default_factory=list)  # {"title", "body"}
@@ -44,6 +45,7 @@ class FakeCanvas:
         self.downloads: list[int] = []
         self.flaky: dict[str, int] = {}  # path -> remaining 503s
         self.token = "good-token"
+        self.requests: list[str] = []
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -74,6 +76,7 @@ class FakeCanvas:
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        self.requests.append(path)
         if self.flaky.get(path, 0) > 0:
             self.flaky[path] -= 1
             return httpx.Response(503)
@@ -140,6 +143,11 @@ class FakeCanvas:
             return httpx.Response(200, json=self._file_json(f))
         if rest == ["modules"]:
             mods = [{"id": i, "name": n} for i, n in enumerate(course.modules, 1)]
+            if "items" in request.url.params.get_list("include[]") and course.module_items_inline:
+                for m in mods:
+                    m["items"] = [
+                        {"type": "File", "content_id": fid} for fid in course.modules[m["name"]]
+                    ]
             return self._page(request, mods)
         if len(rest) == 3 and rest[0] == "modules" and rest[2] == "items":
             name = list(course.modules)[int(rest[1]) - 1]

@@ -35,9 +35,16 @@ class Entry:
 
 
 class Manifest:
-    def __init__(self, path: Path, entries: dict[int, Entry] | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        entries: dict[int, Entry] | None = None,
+        archived: dict[int, list[str]] | None = None,
+    ) -> None:
         self.path = path
         self.entries: dict[int, Entry] = entries or {}
+        # Completed courses already synced in full: course id -> sources used then.
+        self.archived: dict[int, list[str]] = archived or {}
 
     @classmethod
     def load(cls, save_dir: Path) -> Manifest:
@@ -46,7 +53,16 @@ class Manifest:
             return cls(path)
         data = json.loads(path.read_text(encoding="utf-8"))
         entries = {e["id"]: Entry(**e) for e in data.get("files", [])}
-        return cls(path, entries)
+        archived = {int(k): list(v) for k, v in data.get("archived_courses", {}).items()}
+        return cls(path, entries, archived)
+
+    def is_archived(self, course_id: int, sources: list[str]) -> bool:
+        """True if this completed course was fully synced with (at least) these sources."""
+        done = self.archived.get(course_id)
+        return done is not None and set(sources) <= set(done)
+
+    def mark_archived(self, course_id: int, sources: list[str]) -> None:
+        self.archived[course_id] = sorted(sources)
 
     def get(self, file_id: int) -> Entry | None:
         return self.entries.get(file_id)
@@ -63,6 +79,7 @@ class Manifest:
         data = {
             "version": MANIFEST_VERSION,
             "files": [asdict(e) for e in sorted(self.entries.values(), key=lambda e: e.id)],
+            "archived_courses": {str(k): v for k, v in sorted(self.archived.items())},
         }
         tmp = self.path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
