@@ -27,6 +27,9 @@ SOURCES: tuple[str, ...] = (
     "discussions",
 )
 
+# Only the Files tab by default; the others are opt-in through the `sources` setting.
+DEFAULT_SOURCES: tuple[str, ...] = ("files",)
+
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 # Matches /files/123 and /courses/45/files/123 in links, images and API endpoints.
 _FILE_LINK = re.compile(r"/(?:courses/(\d+)/)?files/(\d+)")
@@ -224,10 +227,12 @@ def _assign_paths(
 
 
 def scan_course(
-    client: CanvasClient, course: Course, dirname: str, sources: Sequence[str] = SOURCES
+    client: CanvasClient, course: Course, dirname: str, sources: Sequence[str] = DEFAULT_SOURCES
 ) -> CourseScan:
     """List a course's files from every enabled source.
 
+    When the Files tab is enabled but hidden or empty, Modules is scanned as a fallback
+    even if it is not enabled, so such courses still get their files.
     A hidden tab (401/403/404) just skips that source. Any other error marks the whole
     scan as failed, so no file of this course is reported as deleted.
     """
@@ -235,7 +240,12 @@ def scan_course(
     files: dict[int, tuple[CanvasFile, list[str], str]] = {}
     links: dict[int, tuple[int, list[str], str]] = {}
     try:
-        for source in (s for s in SOURCES if s in sources):
+        for source in SOURCES:
+            fallback = (
+                source == "modules" and "files" in sources and (scan.files_tab_hidden or not files)
+            )
+            if source not in sources and not fallback:
+                continue
             try:
                 for entry in _SCANNERS[source](client, course):
                     if isinstance(entry[0], CanvasFile):

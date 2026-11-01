@@ -5,7 +5,14 @@ from pathlib import Path
 import pytest
 
 from canvas_pull.api import AuthError, CanvasClient
-from canvas_pull.collector import course_dirnames, list_courses, sanitize, scan_course
+from canvas_pull.collector import (
+    DEFAULT_SOURCES,
+    SOURCES,
+    course_dirnames,
+    list_courses,
+    sanitize,
+    scan_course,
+)
 from canvas_pull.manifest import Manifest
 from canvas_pull.sync import Kind, execute, make_plan
 
@@ -27,11 +34,11 @@ def client_for(fake: FakeCanvas, token: str = "good-token") -> CanvasClient:
     return CanvasClient(BASE, token, transport=fake.transport(), backoff=0)
 
 
-def run(fake: FakeCanvas, save_dir: Path, **kw):
+def run(fake: FakeCanvas, save_dir: Path, sources=DEFAULT_SOURCES, **kw):
     with client_for(fake) as client:
         courses = list_courses(client)
         names = course_dirnames(courses)
-        scans = [scan_course(client, c, names[c.id]) for c in courses]
+        scans = [scan_course(client, c, names[c.id], sources) for c in courses]
         manifest = Manifest.load(save_dir)
         plan = make_plan(scans, manifest, save_dir)
         result = execute(plan, client=client, manifest=manifest, save_dir=save_dir, **kw)
@@ -203,7 +210,7 @@ def test_files_linked_from_other_places(tmp_path):
     ]
     course.discussions = [{"id": 8, "title": "Q&A", "message": '<a href="/files/999">gone</a>'}]
     fake.courses[3] = course
-    plan, result = run(fake, tmp_path)
+    plan, result = run(fake, tmp_path, sources=SOURCES)
     assert kinds(result) == {
         "Bio/Syllabus/syllabus.pdf": "new",
         "Bio/Assignments/HW 1/hw.pdf": "new",
@@ -216,7 +223,7 @@ def test_files_tab_wins_over_links(canvas, tmp_path):
     canvas.courses[10].assignments = [
         {"id": 1, "name": "HW", "description": '<a href="/courses/10/files/100">x</a>'}
     ]
-    _, result = run(canvas, tmp_path)
+    _, result = run(canvas, tmp_path, sources=SOURCES)
     assert "Signals & Systems/syllabus.pdf" in kinds(result)
 
 
@@ -234,3 +241,29 @@ def test_file_links():
     html = '<a href="/courses/5/files/7/download"></a><img src="/files/8"><a href="/files/7">'
     assert file_links(html, 1) == [(7, 5), (8, 1)]
     assert file_links(None, 1) == []
+
+
+def test_default_is_files_tab_only(canvas, tmp_path):
+    canvas.courses[10].files[200] = FakeFile(200, "extra.pdf", 99, b"e")
+    canvas.courses[10].pages = [{"title": "P", "body": '<a href="/files/200">x</a>'}]
+    del canvas.courses[10].files[200]  # linked from a page only, not in the Files tab
+    course = canvas.courses[10]
+    course.announcements = [
+        {
+            "id": 1,
+            "title": "A",
+            "message": "",
+            "attachments": [canvas._file_json(FakeFile(300, "ann.pdf", 1, b"a"))],
+        }
+    ]
+    _, result = run(canvas, tmp_path)
+    assert set(kinds(result)) == {
+        "Signals & Systems/syllabus.pdf",
+        "Signals & Systems/Week 1/lecture1.pptx",
+    }
+
+
+def test_modules_fallback_only_when_files_tab_unusable(canvas, tmp_path):
+    canvas.courses[10].modules = {"Extra": [100]}
+    _, result = run(canvas, tmp_path)
+    assert not any("Modules" in p for p in kinds(result))  # Files tab works: no fallback

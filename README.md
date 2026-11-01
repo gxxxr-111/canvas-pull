@@ -2,7 +2,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-green" />
-  <img src="https://img.shields.io/badge/version-2.1.0-blue" />
+  <img src="https://img.shields.io/badge/version-2.2.0-blue" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" />
 </p>
 
@@ -36,9 +36,9 @@ Operating Systems
   desktop notification when something changes.
 - **Old versions kept.** When a file changes, the previous copy is moved to
   `.canvas-pull/history/<timestamp>/`. Files deleted on Canvas stay on your disk.
-- **Finds files everywhere.** Besides the Files tab: Modules, the syllabus, assignment
-  descriptions, pages, announcements and discussions (attachments and linked files). This also
-  covers courses that hide the Files tab.
+- **Files tab by default, more on request.** Only the Files tab is synced by default (with
+  Modules as a fallback when a course hides it). Opt in to the syllabus, assignment
+  descriptions, pages, announcements and discussions through the `sources` setting.
 - **Current courses, or everything.** Courses whose term has ended are skipped by default;
   `--completed` also archives concluded courses.
 - **Safe token storage.** `init` stores your token in the system keychain, not in a text file.
@@ -90,6 +90,14 @@ keep_history = true      # keep replaced versions in .canvas-pull/history
 git = false              # commit after every sync
 exclude = ["PE", "12345"] # course IDs or name fragments to skip
 include_completed = false # also sync concluded courses
+sources = ["files"]       # default; add any of the sources below
+```
+
+Available sources: `files`, `modules`, `syllabus`, `assignments`, `pages`, `announcements`,
+`discussions`. With the default, a course that hides its Files tab (or leaves it empty) falls
+back to Modules automatically. To grab everything:
+
+```toml
 sources = ["files", "modules", "syllabus", "assignments", "pages", "announcements", "discussions"]
 ```
 
@@ -157,6 +165,7 @@ canvas-pull schedule enable --at 08:00   # 每天早上自动同步，有变化�
 
 - Token 在 Canvas 的「账户 → 设置 → 新建访问许可证」生成，`init` 会把它存进系统钥匙串。
 - 文件被修改时，旧版本会移到 `.canvas-pull/history/`；Canvas 上删除的文件本地不会删除。
-- 除了「文件」栏目，还会从模块、课程大纲、作业说明、页面、公告和讨论里找附件和链接的文件。
+- 默认只同步「文件」栏目；课程隐藏了文件栏目时，会自动改从「模块」里找。
+- 想要更多来源（课程大纲、作业、页面、公告、讨论里的附件和链接），在配置文件里设置 `sources`。
 - `--completed` 可以把已结业的课程也一起归档下来。
 - `sync --git` 会在保存目录里自动提交一次 git，方便用 `git log` 回看。

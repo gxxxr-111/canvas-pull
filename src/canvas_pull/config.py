@@ -19,7 +19,7 @@ from pathlib import Path
 
 from platformdirs import user_config_path
 
-from .collector import SOURCES
+from .collector import DEFAULT_SOURCES, SOURCES
 
 APP_NAME = "canvas-pull"
 KEYRING_SERVICE = "canvas-pull"
@@ -47,7 +47,7 @@ class Config:
     git: bool = False
     exclude: list[str] = field(default_factory=list)
     include_completed: bool = False
-    sources: list[str] = field(default_factory=lambda: list(SOURCES))
+    sources: list[str] = field(default_factory=lambda: list(DEFAULT_SOURCES))
 
 
 def default_config_file() -> Path:
@@ -147,7 +147,7 @@ def load_config(
             git=bool(data.get("git", False)),
             exclude=[str(x) for x in data.get("exclude", [])],
             include_completed=bool(data.get("include_completed", False)),
-            sources=_sources(data.get("sources", list(SOURCES))),
+            sources=_sources(data.get("sources", list(DEFAULT_SOURCES))),
         )
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"Invalid value in {config_file}: {exc}") from exc
