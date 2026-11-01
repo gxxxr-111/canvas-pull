@@ -9,7 +9,7 @@
 
 cd "$(dirname "$0")"
 
-# Parse SAVE_DIR from config.yml
+# Parse SAVE_DIR from user_config.yml
 CONFIG_FILE="config.yml"
 get_save_dir() {
     if [ ! -f "$CONFIG_FILE" ]; then

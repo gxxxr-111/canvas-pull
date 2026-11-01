@@ -1,0 +1,75 @@
+import shutil
+import subprocess
+
+import pytest
+from typer.testing import CliRunner
+
+from canvas_pull import cli
+from canvas_pull.api import CanvasClient
+
+from .fake_canvas import BASE, FakeCanvas, FakeCourse, FakeFile
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    fake = FakeCanvas()
+    course = FakeCourse(id=1, name="Algorithms")
+    course.files[1] = FakeFile(1, "hw1.pdf", 1, b"one")
+    fake.courses[1] = course
+
+    def client(base_url, token, **kw):
+        return CanvasClient(base_url, token, transport=fake.transport(), backoff=0)
+
+    monkeypatch.setattr(cli, "CanvasClient", client)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CANVAS_URL", BASE)
+    monkeypatch.setenv("CANVAS_TOKEN", "good-token")
+    monkeypatch.setenv("CANVAS_SAVE_DIR", str(tmp_path / "out"))
+    monkeypatch.setattr(cli, "default_config_file", lambda: tmp_path / "none.toml")
+    return fake, tmp_path / "out"
+
+
+def test_status_sync_log(env):
+    fake, out = env
+    r = runner.invoke(cli.app, ["status"])
+    assert r.exit_code == 0 and "hw1.pdf" in r.output and not out.exists()
+
+    r = runner.invoke(cli.app, ["sync"])
+    assert r.exit_code == 0, r.output
+    assert (out / "Algorithms/hw1.pdf").read_bytes() == b"one"
+
+    fake.courses[1].files[2] = FakeFile(2, "hw2.pdf", 1, b"two")
+    runner.invoke(cli.app, ["sync"])
+    r = runner.invoke(cli.app, ["log"])
+    assert r.output.index("hw2.pdf") < r.output.index("hw1.pdf")  # newest first
+
+
+def test_course_filter(env):
+    r = runner.invoke(cli.app, ["status", "-c", "nothing-matches"])
+    assert "No matching active courses" in r.output
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_git_commit(env, monkeypatch):
+    _, out = env
+    for k, v in {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }.items():
+        monkeypatch.setenv(k, v)
+    r = runner.invoke(cli.app, ["sync", "--git"])
+    assert r.exit_code == 0, r.output
+    msg = subprocess.run(
+        ["git", "-C", str(out), "log", "-1", "--format=%s"], capture_output=True, text=True
+    ).stdout
+    assert msg.strip() == "sync: 1 new"
+
+
+def test_bad_token_message(env, monkeypatch):
+    monkeypatch.setenv("CANVAS_TOKEN", "expired")
+    r = runner.invoke(cli.app, ["sync"])
+    assert r.exit_code == 1 and "token" in r.output.lower()

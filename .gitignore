@@ -172,3 +172,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# canvas-pull local settings (may contain tokens)
+config/
+config.yml
+.canvas-pull/
+.DS_Store

@@ -1,87 +1,132 @@
 <h1 align="center">Canvas Pull</h1>
 
 <p align="center">
-    <img src="https://img.shields.io/badge/license-MIT-green)" />
-    <img src="https://img.shields.io/badge/version-1.0.0-blue" />
+  <img src="https://img.shields.io/badge/license-MIT-green" />
+  <img src="https://img.shields.io/badge/version-2.0.0-blue" />
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue" />
 </p>
 
+Sync every file from your **active** Canvas LMS courses in one command. Later runs download
+only what changed and tell you exactly which files were **added, modified, renamed/moved or
+deleted** by your instructors.
 
-Canvas Pull is a Python project designed to automate content retrieval tasks from Canvas.
+```
+$ canvas-pull sync
 
-# General Installation
+Signals & Systems
+  + new      Week 7/lecture7.pdf
+  ~ modified syllabus.pdf
+  → moved    lecture1.pptx → Week 1/Lecture 01.pptx
 
-1. Generate your API access token
+Operating Systems
+  - deleted  old-quiz.pdf
 
-    [How to generate?](https://community.canvaslms.com/t5/Canvas-Basics-Guide/How-do-I-manage-API-access-tokens-in-my-user-account/ta-p/615312)
+1 new, 1 modified, 1 moved, 1 deleted · ~/Canvas
+```
 
-- ⚠️ Warning
-      
-  1. **NEVER** share your API access token, otherwise it could be used maliciously.
-  2. Generate **short-term** API access tokens and update them frequently to ensure safety. 
+[中文说明见下方](#中文说明)
 
+## Features
 
-2. Edit `config.yml`
+- **Incremental sync.** Files are tracked by their Canvas file ID, so unchanged files are never
+  downloaded again and renames are detected without re-downloading.
+- **Change report.** `status` previews changes, `sync` applies them, `log` shows past syncs.
+- **Old versions kept.** When a file changes, the previous copy is moved to
+  `.canvas-pull/history/<timestamp>/`. Files deleted on Canvas stay on your disk.
+- **Finds hidden files.** If a course hides the Files tab, files linked from Modules are used.
+- **Only current courses.** Courses whose term has ended are skipped (use `--all-courses`).
+- **Safe token storage.** `init` stores your token in the system keychain, not in a text file.
+- **Optional git.** `sync --git` commits each sync in the save folder.
+- Parallel downloads, automatic retries with back-off, full pagination.
 
-    ```yaml
-    WEBSITE: oc.sjtu.edu.cn # Domain of your institute (Should be based on Canvas LMS).
-    ACCESS_TOKEN: xxxxxx    # Your API access token. You can get it from your Canvas LMS.
-    SAVE_DIR: .             # Directory to save the data. Default is the current directory.
-    ```
+## Install
 
-3. Run `main.py`
+```bash
+uv tool install git+https://github.com/gxxxr-111/canvas-pull
+# or: pipx install git+https://github.com/gxxxr-111/canvas-pull
+```
 
-    ```bash
-    python path/to/main.py
-    ```
+## Quick start
 
+1. In Canvas, open **Account → Settings → New Access Token** and copy the token.
+   Give it an expiry date. Never share it.
+2. Run:
 
+   ```bash
+   canvas-pull init      # Canvas URL (e.g. oc.sjtu.edu.cn), save folder, token
+   canvas-pull courses   # check which courses will be synced
+   canvas-pull sync
+   ```
 
-# Run in Bash & Manage with Git
+## Commands
 
-1. Give execution permission to `canvas-pull`
+| Command | What it does |
+| --- | --- |
+| `canvas-pull init` | Set Canvas URL, save folder and token (token goes to the keychain). |
+| `canvas-pull courses [--all]` | List active courses. |
+| `canvas-pull status [-c COURSE]` | Show what changed on Canvas. Downloads nothing. |
+| `canvas-pull sync [-n] [-c COURSE] [--all-courses] [--git]` | Download changes. `-n` is a dry run. `-c` takes a course ID or part of its name and can be repeated. |
+| `canvas-pull log [-n 10]` | Show recent syncs. |
+| `canvas-pull config` | Show settings in use. |
 
-    ```bash
-    chmod +x canvas-pull
-    ```
+## Configuration
 
-2.  Add this directory to `PATH` variable.
-    
-    Edit `~/.bashrc`
+`init` writes a config file (path shown by `canvas-pull config`). You can edit it:
 
-    ```bash
-    nano ~/.bashrc
-    # or vim ~/.bashrc
-    ```
+```toml
+website = "https://oc.sjtu.edu.cn"
+save_dir = "/Users/me/Canvas"
+concurrency = 4          # parallel downloads
+keep_history = true      # keep replaced versions in .canvas-pull/history
+git = false              # commit after every sync
+exclude = ["PE", "12345"] # course IDs or name fragments to skip
+```
 
-    Add the following line and save
+Environment variables override the file: `CANVAS_URL`, `CANVAS_TOKEN`, `CANVAS_SAVE_DIR`. A
+`.env` file in the current folder is also read (v1 keys `WEBSITE`, `ACCESS_TOKEN`, `SAVE_DIR`
+still work).
 
-    ```bash
-    export PATH="$PATH:/path/to/canvas-pull"
-    ```
+## How change detection works
 
-    Reload `.bashrc` settings
+Each synced file is recorded in `<save_dir>/.canvas-pull/manifest.json` with its Canvas ID,
+path, size, last-modified time and SHA-256. On every run canvas-pull compares that record with
+Canvas metadata:
 
-    ```bash
-    source ~/.bashrc
-    # or . ~/.bashrc
-    ``` 
+| Canvas says | Result |
+| --- | --- |
+| ID not seen before | **new**: download |
+| Size or modified time changed | **modified**: download; if the bytes are identical, nothing is reported |
+| Same content, different name/folder | **moved**: renamed locally, no download |
+| ID gone from a course that was read successfully | **deleted**: reported once; local copy kept |
+| Recorded but missing on disk | **restored**: downloaded again |
 
+Content-level diffs of PDF/PPTX/DOCX are out of scope for now.
 
-- 💡 Note
-    
-    For macOS users using `zsh`, just replace `.bashrc` with `.zshrc`.
+## Development
 
+```bash
+uv sync
+uv run pytest
+uv run ruff check src tests
+```
 
-3. Run in bash
+Tests run against an in-memory fake Canvas, so no account is needed.
 
-    ```bash
-    canvas-pull
-    ```
+---
 
-4. Check file changes
+## 中文说明
 
-    You can utilize `VSCode` to check the commit tree and view the differences. For macOS users, some third-party applications such as `Fork` are also excellent options. 
+一条命令同步所有**正在进行的** Canvas 课程文件。之后每次运行只下载有变化的文件，并列出老师**新增、修改、改名/移动、删除**了哪些文件。
 
-# Imperfections
+```bash
+uv tool install git+https://github.com/gxxxr-111/canvas-pull
+canvas-pull init      # 填学校 Canvas 域名（如 oc.sjtu.edu.cn）、保存目录、Access Token
+canvas-pull status    # 只看变化，不下载
+canvas-pull sync      # 下载变化
+canvas-pull log       # 查看历次同步记录
+```
 
-Since the generation rule of `file_id` is currently unclear. There is temporarily no way to compare remote files with local files without downloading them from the remote server. If there is any approach to distinguish files at both ends using unique id, hash functions or others, you are welcome to open an issue!
+- Token 在 Canvas 的「账户 → 设置 → 新建访问许可证」生成，`init` 会把它存进系统钥匙串。
+- 文件被修改时，旧版本会移到 `.canvas-pull/history/`；Canvas 上删除的文件本地不会删除。
+- 课程隐藏了「文件」栏目时，会自动从「单元/模块」里找文件。
+- `sync --git` 会在保存目录里自动提交一次 git，方便用 `git log` 回看。
